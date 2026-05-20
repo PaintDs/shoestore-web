@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { ArrowLeft, PlusCircle, Package, History, Box, Truck, RefreshCw, AlertTriangle } from 'lucide-react';
-
+import React, { useState, useEffect, useCallback } from 'react';
+import { ArrowLeft, PlusCircle, Package, History, Box, Truck, RefreshCw, AlertTriangle } from 'lucide-react'; // useWebSocket
 const InventoryManagement = ({ onBack }) => {
   const [activeTab, setActiveTab] = useState('inbound'); // 'inbound', 'outbound', 'inventory', 'count', 'returns'
   const [inboundHistory, setInboundHistory] = useState([]);
@@ -106,19 +105,18 @@ const InventoryManagement = ({ onBack }) => {
   };
 
   useEffect(() => {
-    fetchProducts();
+    // Nạp dữ liệu lần đầu khi component mount hoặc khi chuyển tab
+    fetchProducts(); // Luôn nạp lại sản phẩm vì tồn kho có thể thay đổi
     if (activeTab === 'inbound') {
       fetchInboundHistory();
+    } else if (activeTab === 'outbound') {
+      fetchPendingOrders();
+    } else if (activeTab === 'count') {
+      fetchCountHistory();
     } else if (activeTab === 'returns') {
       fetchReturnsHistory();
     }
-    else if (activeTab === 'outbound') { // Gọi hàm mới khi tab Xuất kho được chọn
-      fetchPendingOrders();
-    }
-    else if (activeTab === 'count') { // Gọi hàm mới khi tab Kiểm kê được chọn
-      fetchCountHistory();
-    }
-  }, [activeTab]);
+  }, [activeTab]); // Chỉ phụ thuộc vào sự kiện chuyển activeTab
 
   // Logic cho nút "Xác nhận xuất kho"
   const handleConfirmOutbound = async (orderId) => {
