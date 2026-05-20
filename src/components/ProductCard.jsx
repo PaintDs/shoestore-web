@@ -2,7 +2,7 @@ import React from 'react';
 import { ShoppingCart, Eye } from 'lucide-react';
 
 // Nhận thêm prop onViewDetail
-const ProductCard = ({ name, price, image, category, onViewDetail }) => {
+const ProductCard = ({ id, name, price, image, category, stock, onViewDetail, onAddToCart }) => {
   return (
     <div className="group bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 border border-gray-100 overflow-hidden cursor-pointer" onClick={onViewDetail}>
       <div className="relative aspect-[4/5] bg-gray-100 overflow-hidden">
@@ -14,7 +14,7 @@ const ProductCard = ({ name, price, image, category, onViewDetail }) => {
         <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-3">
           {/* Nút thêm giỏ hàng (ngăn sự kiện click lan ra ngoài thẻ card) */}
           <button 
-            onClick={(e) => { e.stopPropagation(); /* Logic thêm giỏ hàng ở đây */ }} 
+            onClick={(e) => { e.stopPropagation(); onAddToCart?.({ id, name, price, image, category, stock }); }} 
             className="p-3 bg-white rounded-full hover:bg-blue-600 hover:text-white transition-colors"
           >
             <ShoppingCart className="w-5 h-5" />

@@ -23,7 +23,7 @@ const FeedbackManagement = ({ onBack }) => {
     setLoading(true);
     setError(null);
     try {
-      let url = 'http://localhost:8000/api/feedback';
+      let url = '/api/feedback';
       const params = new URLSearchParams();
       if (filterRating !== 'all') params.append('rating', filterRating);
       if (filterStatus !== 'all') params.append('status', filterStatus);
@@ -54,7 +54,7 @@ const FeedbackManagement = ({ onBack }) => {
       return;
     }
     try {
-      const response = await fetch(`http://localhost:8000/api/feedback/${currentFeedback.id}/process`, {
+      const response = await fetch(`/api/feedback/${currentFeedback.id}/process`, {
         method: 'PUT',
         headers,
         body: JSON.stringify({ action: processAction, reason: processReason })

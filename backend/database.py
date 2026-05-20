@@ -1,6 +1,74 @@
 import sqlite3
 from datetime import datetime
 
+
+def _column_exists(cursor, table: str, column: str) -> bool:
+    cursor.execute(f"PRAGMA table_info({table})")
+    return column in [row[1] for row in cursor.fetchall()]
+
+
+def _ensure_column(cursor, table: str, column: str, definition: str) -> None:
+    if not _column_exists(cursor, table, column):
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _migrate_payroll_schema(cursor) -> None:
+    """Additive migrations for payroll-related tables and columns."""
+    _ensure_column(cursor, "orders", "user_id", "INTEGER")
+    _ensure_column(cursor, "orders", "sales_person_id", "INTEGER")
+    _ensure_column(cursor, "orders", "order_type", "TEXT")
+    _ensure_column(cursor, "products", "sku", "TEXT")
+    _ensure_column(cursor, "products", "status", "TEXT DEFAULT 'active'")
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_products_sku ON products(sku) WHERE sku IS NOT NULL AND sku != ''"
+    )
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS payroll_periods (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            year INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            status TEXT DEFAULT 'draft',
+            locked_at DATETIME,
+            locked_by INTEGER,
+            UNIQUE(year, month),
+            FOREIGN KEY(locked_by) REFERENCES users(id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS payroll_adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            year INTEGER NOT NULL,
+            amount INTEGER NOT NULL,
+            adjustment_type TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            created_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id),
+            FOREIGN KEY(created_by) REFERENCES users(id)
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_payrolls_period ON payrolls(year, month)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_timesheets_user_date ON timesheets(user_id, work_date)"
+    )
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_timesheets_user_date_unique "
+        "ON timesheets(user_id, work_date)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_payroll_adjustments_period "
+        "ON payroll_adjustments(year, month, user_id)"
+    )
+    cursor.execute(
+        "UPDATE payrolls SET status = 'draft' WHERE status IN ('open', 'unlocked')"
+    )
+
+
 def init_db():
     # Import cục bộ để tránh lỗi Circular Import. pwd_context đã được chuyển vào routers/auth.py
     from routers.auth import pwd_context
@@ -32,6 +100,12 @@ def init_db():
         )
     """)
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS customers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, phone TEXT UNIQUE NOT NULL,
+            loyalty_points INTEGER DEFAULT 0, rank TEXT DEFAULT 'Normal'
+        )
+    """)
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             customer_id INTEGER,
@@ -39,11 +113,12 @@ def init_db():
             order_type TEXT,
             total_amount INTEGER NOT NULL,
             status TEXT DEFAULT 'pending',
+            user_id INTEGER,
+            sales_person_id INTEGER,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(customer_id) REFERENCES customers(id)
         )
     """)
-    cursor.execute("DROP TABLE IF EXISTS order_items;") # Đảm bảo bảng được tạo lại với schema mới nhất
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS order_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,7 +158,6 @@ def init_db():
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    cursor.execute("DROP TABLE IF EXISTS promotions;") # Xóa bảng cũ để tạo lại với schema mới
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS promotions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,12 +230,6 @@ def init_db():
         )
     """)
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS customers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, phone TEXT UNIQUE NOT NULL,
-            loyalty_points INTEGER DEFAULT 0, rank TEXT DEFAULT 'Normal'
-        )
-    """)
-    cursor.execute("""
         CREATE TABLE IF NOT EXISTS warehouse_slips (
             id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, product_id INTEGER NOT NULL,
             quantity INTEGER NOT NULL, reason TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -185,6 +253,8 @@ def init_db():
 
 
     cursor.execute("CREATE TABLE IF NOT EXISTS accounting_periods (id INTEGER PRIMARY KEY, month INTEGER, year INTEGER, status TEXT, UNIQUE(month, year))")
+
+    _migrate_payroll_schema(cursor)
 
     # Khởi tạo dữ liệu Test nếu DB trống
     cursor.execute("SELECT COUNT(*) FROM users")

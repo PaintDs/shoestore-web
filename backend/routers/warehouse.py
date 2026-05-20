@@ -1,10 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import PlainTextResponse
 import sqlite3
+import csv
+import io
 from typing import Optional
 from pydantic import BaseModel
 
 from database import get_db
-from .auth import get_warehouse_user
+from .auth import get_warehouse_user, get_current_user
 from .orders import update_order_status, OrderStatusUpdate
 
 router = APIRouter(
@@ -121,3 +124,33 @@ def process_return(req: WarehouseSlipCreate, conn: sqlite3.Connection = Depends(
         return {"message": "WH_RETURN_04: Hàng lỗi, đã chuyển sang khu vực hàng hỏng."}
     
     raise HTTPException(status_code=400, detail="Tình trạng hàng không hợp lệ.")
+
+
+@router.get("/report")
+def warehouse_inventory_report(
+    stock_lt: Optional[int] = None,
+    conn: sqlite3.Connection = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """WH_RPT_01–03: Báo cáo tồn kho và xuất CSV."""
+    if user["role"] not in ("admin", "kho"):
+        raise HTTPException(status_code=403, detail="Bạn không có quyền xem báo cáo kho.")
+    cursor = conn.cursor()
+    query = "SELECT id, name, category, stock, bin FROM products WHERE 1=1"
+    params = []
+    if stock_lt is not None:
+        query += " AND stock < ?"
+        params.append(stock_lt)
+    query += " ORDER BY stock ASC"
+    cursor.execute(query, params)
+    rows = [dict(r) for r in cursor.fetchall()]
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["id", "name", "category", "stock", "bin"])
+    for r in rows:
+        writer.writerow([r["id"], r["name"], r["category"], r["stock"], r.get("bin") or ""])
+    return PlainTextResponse(
+        content=buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="warehouse_report.csv"'},
+    )

@@ -36,7 +36,7 @@ const Dashboard = ({ onBack }) => {
         setTotalRevenue(performanceData.total_revenue);
         setTotalOrders(performanceData.total_orders);
         // Giả lập số khách hàng mới vì Backend chưa có API cụ thể
-        setNewCustomers(Math.floor(Math.random() * 50) + 10); 
+        setNewCustomers(performanceData.new_customers ?? 0);
 
         // Fetch Top Products Report
         const topProductsRes = await fetch('/api/reports/top-products?limit=5&sort_by=quantity', { headers });

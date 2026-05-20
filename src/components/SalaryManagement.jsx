@@ -50,7 +50,7 @@ const SalaryManagement = ({ onBack }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`http://localhost:8000/api/salaries/payroll/${year}/${month}`, { headers });
+      const response = await fetch(`/api/salaries/payroll/${year}/${month}`, { headers });
       if (!response.ok) {
           const errData = await response.json();
           throw new Error(errData.detail || `Lỗi khi tải bảng lương: ${response.statusText}`);
@@ -68,7 +68,7 @@ const SalaryManagement = ({ onBack }) => {
   // Hàm nạp danh sách nhân viên
   const fetchEmployees = async () => {
     try {
-      const response = await fetch(`http://localhost:8000/api/users/employees`, { headers });
+      const response = await fetch(`/api/users/employees`, { headers });
       if (!response.ok) throw new Error('Lỗi khi tải danh sách nhân viên');
       const data = await response.json();
       setEmployees(data);
@@ -99,7 +99,7 @@ const SalaryManagement = ({ onBack }) => {
       if (body) {
           config.body = JSON.stringify(body);
       }
-      const response = await fetch(`http://localhost:8000${endpoint}`, config);
+      const response = await fetch(endpoint, config);
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Thao tác thất bại.');
       alert(successMessage);
@@ -185,7 +185,44 @@ const SalaryManagement = ({ onBack }) => {
 
   // Logic Xuất dữ liệu (MGR_SAL_07)
   const handleExportPayroll = async () => {
-    await handleApiCall('/api/salaries/export', 'GET', null, 'Yêu cầu xuất báo cáo lương đã được gửi. File sẽ được tạo và gửi đến bạn.');
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth() + 1;
+    try {
+      const response = await fetch(`/api/salaries/export?year=${year}&month=${month}`, { headers });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Xuất báo cáo thất bại.');
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `payroll_${year}_${String(month).padStart(2, '0')}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Lỗi: ${err.message}`);
+    }
+  };
+
+  const handleTimesheetSubmit = async (e) => {
+    e.preventDefault();
+    if (!timesheetForm.user_id) {
+      alert('Vui lòng chọn nhân viên.');
+      return;
+    }
+    const hours = Number(timesheetForm.hours_worked);
+    if (isNaN(hours) || hours <= 0 || hours > 24) {
+      alert('Số giờ làm việc phải từ 0.5 đến 24.');
+      return;
+    }
+    const payload = {
+      user_id: Number(timesheetForm.user_id),
+      work_date: timesheetForm.work_date,
+      hours_worked: hours,
+    };
+    const success = await handleApiCall('/api/salaries/timesheet', 'POST', payload, 'Chấm công thành công!');
+    if (success) setShowTimesheetModal(false);
   };
 
   // --- MODAL OPEN HANDLERS ---
@@ -217,7 +254,10 @@ const SalaryManagement = ({ onBack }) => {
             <div className="flex gap-2 flex-wrap">
               <button onClick={() => setShowSetupModal(true)} className="bg-white border border-gray-300 text-gray-700 px-3 py-2 rounded-lg font-bold flex items-center gap-2 text-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed" disabled={isPayrollLocked}>
                   <DollarSign className="w-4 h-4" /> Thiết lập Lương
-              </button>              
+              </button>
+              <button onClick={() => setShowTimesheetModal(true)} className="bg-white border border-gray-300 text-gray-700 px-3 py-2 rounded-lg font-bold flex items-center gap-2 text-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed" disabled={isPayrollLocked}>
+                  <Calendar className="w-4 h-4" /> Chấm công
+              </button>
               <button onClick={handleLockPayroll} className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg font-bold flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed" disabled={isPayrollLocked}>
                   <Lock className="w-4 h-4" /> Chốt Bảng lương
               </button>
@@ -256,7 +296,7 @@ const SalaryManagement = ({ onBack }) => {
                                 <td className="p-4 font-black text-lg text-green-700">{formatCurrency(p.total_salary)}</td>
                                 <td className="p-4">
                                     <span className={`px-2 py-1 rounded text-xs font-bold ${p.status === 'locked' ? 'bg-gray-200 text-gray-800' : 'bg-green-100 text-green-700'}`}>
-                                        {p.status === 'locked' ? 'Đã chốt' : (p.status || 'Chưa chốt')}
+                                        {p.status === 'locked' ? 'Đã chốt' : 'Bản nháp'}
                                     </span>
                                 </td>
                                 <td className="p-4">
@@ -293,6 +333,35 @@ const SalaryManagement = ({ onBack }) => {
               <div><label className="block text-sm font-semibold mb-1">Lương cơ bản (VNĐ)</label><input required type="number" min="1" value={setupForm.base_salary} onChange={e => setSetupForm({ ...setupForm, base_salary: e.target.value })} className="w-full border p-2.5 rounded-xl"/></div>
               <div><label className="block text-sm font-semibold mb-1">Hệ số lương</label><input type="number" step="0.1" min="0.1" value={setupForm.coefficient} onChange={e => setSetupForm({ ...setupForm, coefficient: e.target.value })} className="w-full border p-2.5 rounded-xl"/></div>
               <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl mt-4">Lưu Thiết lập</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showTimesheetModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl">
+            <div className="flex justify-between items-center mb-6 border-b pb-4">
+              <h2 className="text-xl font-bold">Chấm công</h2>
+              <button onClick={() => setShowTimesheetModal(false)}><X/></button>
+            </div>
+            <form onSubmit={handleTimesheetSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold mb-1">Nhân viên</label>
+                <select required value={timesheetForm.user_id} onChange={e => setTimesheetForm({ ...timesheetForm, user_id: e.target.value })} className="w-full border p-2.5 rounded-xl">
+                  <option value="">-- Chọn nhân viên --</option>
+                  {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.name} ({emp.role})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold mb-1">Ngày làm việc</label>
+                <input required type="date" value={timesheetForm.work_date} onChange={e => setTimesheetForm({ ...timesheetForm, work_date: e.target.value })} className="w-full border p-2.5 rounded-xl" />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold mb-1">Số giờ</label>
+                <input required type="number" min="0.5" max="24" step="0.5" value={timesheetForm.hours_worked} onChange={e => setTimesheetForm({ ...timesheetForm, hours_worked: e.target.value })} className="w-full border p-2.5 rounded-xl" />
+              </div>
+              <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl mt-4">Lưu chấm công</button>
             </form>
           </div>
         </div>

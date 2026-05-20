@@ -45,6 +45,9 @@ class SaleOrderCreate(BaseModel):
 class OrderStatusUpdate(BaseModel):
     status: str
 
+class OrderCancelRequest(BaseModel):
+    reason: str
+
 class PromotionUpdate(BaseModel):
     name: Optional[str] = None; discount_percentage: Optional[float] = None; min_order_amount: Optional[int] = None; start_date: Optional[datetime] = None; end_date: Optional[datetime] = None; status: Optional[str] = None
 
@@ -188,7 +191,10 @@ def process_checkout(req: CheckoutRequest, conn: sqlite3.Connection = Depends(ge
             voucher_id = voucher['id']
 
         final_amount = cart_total - discount_amount
-        cursor.execute("INSERT INTO orders (customer_id, customer_name, total_amount, status, user_id) VALUES (?, ?, ?, ?, ?)", (current_user['id'], req.customer_name, final_amount if final_amount > 0 else 0, "pending", current_user['id'])) # user_id is the customer for online orders
+        cursor.execute(
+            "INSERT INTO orders (customer_id, customer_name, order_type, total_amount, status, user_id, sales_person_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (current_user['id'], req.customer_name, 'online', final_amount if final_amount > 0 else 0, "pending", current_user['id'], None),
+        )
         order_id = cursor.lastrowid
         
         # Trừ tồn kho và chèn order_items
@@ -239,9 +245,19 @@ def get_orders(conn: sqlite3.Connection = Depends(get_db), status: Optional[str]
     return orders
 
 @router.get("/user/orders")
-def get_user_orders(conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_user_orders(
+    status: Optional[str] = None,
+    conn: sqlite3.Connection = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM orders WHERE customer_name = ? ORDER BY created_at DESC", (current_user["name"],))
+    query = "SELECT * FROM orders WHERE user_id = ?"
+    params: list = [current_user["id"]]
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    query += " ORDER BY created_at DESC"
+    cursor.execute(query, params)
     orders = [dict(row) for row in cursor.fetchall()]
 
     for order in orders:
@@ -253,7 +269,7 @@ def get_user_orders(conn: sqlite3.Connection = Depends(get_db), current_user: di
 @router.get("/user/orders/{order_id}")
 def get_user_order_detail(order_id: int, conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_current_user)):
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM orders WHERE id = ? AND customer_name = ?", (order_id, current_user["name"]))
+    cursor.execute("SELECT * FROM orders WHERE id = ? AND user_id = ?", (order_id, current_user["id"]))
     order = cursor.fetchone()
     if not order: raise HTTPException(status_code=404, detail="Không tìm thấy đơn hàng hoặc bạn không có quyền truy cập.")
     
@@ -263,16 +279,24 @@ def get_user_order_detail(order_id: int, conn: sqlite3.Connection = Depends(get_
     return order_dict
 
 @router.post("/user/orders/{order_id}/cancel")
-def cancel_user_order(order_id: int, conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def cancel_user_order(
+    order_id: int,
+    body: OrderCancelRequest,
+    conn: sqlite3.Connection = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    if not body.reason or not body.reason.strip():
+        raise HTTPException(status_code=400, detail="INT_ORDER_03: Vui lòng nhập lý do hủy đơn.")
     cursor = conn.cursor()
-    cursor.execute("SELECT status FROM orders WHERE id = ? AND customer_name = ?", (order_id, current_user["name"]))
+    cursor.execute("SELECT status FROM orders WHERE id = ? AND user_id = ?", (order_id, current_user["id"]))
     order_status = cursor.fetchone()
-    if not order_status: raise HTTPException(status_code=404, detail="Không tìm thấy đơn hàng.")
+    if not order_status:
+        raise HTTPException(status_code=404, detail="Không tìm thấy đơn hàng.")
     if order_status["status"] != "pending":
-        raise HTTPException(status_code=400, detail="Không thể hủy đơn hàng ở trạng thái này!")
+        raise HTTPException(status_code=400, detail="INT_ORDER_04: Không thể hủy đơn hàng khi đang giao hoặc đã xử lý.")
     cursor.execute("UPDATE orders SET status = 'cancelled' WHERE id = ?", (order_id,))
     conn.commit()
-    return {"message": "Đơn hàng đã được hủy thành công!"}
+    return {"message": "Đơn hàng đã được hủy thành công!", "reason": body.reason.strip()}
 
 # ================= ENDPOINTS: SALES =================
 
@@ -318,8 +342,16 @@ def create_sale_order(order: SaleOrderCreate, conn: sqlite3.Connection = Depends
 
     # Sử dụng user_id để lưu thông tin người tạo đơn hàng (sales_person_id được thay bằng user_id)
     cursor.execute(
-        "INSERT INTO orders (customer_id, customer_name, order_type, total_amount, status, user_id) VALUES (?, ?, ?, ?, ?, ?)",
-        (order.customer_id, order.customer_name, order.order_type, total_amount, 'awaiting_pickup' if order.order_type != 'online' else 'pending', user['id'])
+        "INSERT INTO orders (customer_id, customer_name, order_type, total_amount, status, user_id, sales_person_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            order.customer_id,
+            order.customer_name,
+            order.order_type,
+            total_amount,
+            'awaiting_pickup' if order.order_type != 'online' else 'pending',
+            user['id'],
+            user['id'],
+        ),
     )
     order_id = cursor.lastrowid
 

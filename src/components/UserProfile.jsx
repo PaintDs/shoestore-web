@@ -2,37 +2,78 @@ import React, { useState, useEffect } from 'react';
 import { User, Package, MapPin, LogOut, ArrowLeft, CheckCircle, Clock, Truck, Star, Send } from 'lucide-react';
 
 const UserProfile = ({ currentUser, onBack, onLogout }) => {
-  const [activeTab, setActiveTab] = useState('orders'); // 'orders' hoặc 'info'
+  const [activeTab, setActiveTab] = useState('orders');
+  const [orderTab, setOrderTab] = useState('all');
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [orderToCancel, setOrderToCancel] = useState(null);
 
   // State for feedback modal
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [currentProductToReview, setCurrentProductToReview] = useState(null);
   const [feedbackForm, setFeedbackForm] = useState({ rating: 5, comment: '' });
 
-  useEffect(() => {
-    const fetchUserOrders = async () => {
-      if (!currentUser) return;
-      setLoading(true);
-      try {
-        const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
-        const response = await fetch('/api/user/orders', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (!response.ok) throw new Error('Không thể tải lịch sử đơn hàng.');
-        const data = await response.json();
-        setOrders(Array.isArray(data) ? data : []);
-      } catch (error) {
-        console.error("Lỗi tải đơn hàng:", error);
-        setOrders([]);
-      } finally {
-        setLoading(false);
-      }
-    };
+  const fetchUserOrders = async () => {
+    if (!currentUser) return;
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      const statusQuery = orderTab !== 'all' ? `?status=${orderTab}` : '';
+      const response = await fetch(`/api/user/orders${statusQuery}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error('Không thể tải lịch sử đơn hàng.');
+      const data = await response.json();
+      setOrders(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Lỗi tải đơn hàng:", error);
+      setOrders([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchUserOrders();
-  }, [currentUser]);
+  }, [currentUser, orderTab]);
+
+  const handleViewOrderDetail = async (orderId) => {
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      const response = await fetch(`/api/user/orders/${orderId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error('Không tải được chi tiết đơn.');
+      setSelectedOrder(await response.json());
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleCancelOrder = async () => {
+    if (!orderToCancel || !cancelReason.trim()) {
+      alert('INT_ORDER_03: Vui lòng nhập lý do hủy đơn.');
+      return;
+    }
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      const response = await fetch(`/api/user/orders/${orderToCancel.id}/cancel`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: cancelReason }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Hủy đơn thất bại.');
+      alert(data.message);
+      setOrderToCancel(null);
+      setCancelReason('');
+      fetchUserOrders();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
 
   const handleOpenFeedbackModal = (product) => {
     setCurrentProductToReview(product);
@@ -75,9 +116,19 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
     switch(status) {
       case 'shipping': return <span className="bg-blue-100 text-blue-800 text-xs px-3 py-1 rounded-full font-bold flex items-center w-fit gap-1"><Truck className="w-4 h-4"/> Đang giao hàng</span>;
       case 'completed': return <span className="bg-green-100 text-green-800 text-xs px-3 py-1 rounded-full font-bold flex items-center w-fit gap-1"><CheckCircle className="w-4 h-4"/> Đã giao thành công</span>;
-      default: return <span className="bg-yellow-100 text-yellow-800 text-xs px-3 py-1 rounded-full font-bold flex items-center w-fit gap-1"><Clock className="w-4 h-4"/> Chờ xử lý</span>;
+      case 'pending': return <span className="bg-yellow-100 text-yellow-800 text-xs px-3 py-1 rounded-full font-bold flex items-center w-fit gap-1"><Clock className="w-4 h-4"/> Chờ xác nhận</span>;
+      case 'cancelled': return <span className="bg-red-100 text-red-800 text-xs px-3 py-1 rounded-full font-bold flex items-center w-fit gap-1">Đã hủy</span>;
+      default: return <span className="bg-gray-100 text-gray-800 text-xs px-3 py-1 rounded-full font-bold flex items-center w-fit gap-1">{status}</span>;
     }
   };
+
+  const ORDER_TABS = [
+    { id: 'all', label: 'Tất cả' },
+    { id: 'pending', label: 'Chờ xác nhận' },
+    { id: 'shipping', label: 'Đang giao' },
+    { id: 'completed', label: 'Đã giao' },
+    { id: 'cancelled', label: 'Đã hủy' },
+  ];
 
   return (
     <div className="min-h-screen bg-gray-50 py-10">
@@ -114,7 +165,19 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
           <div className="flex-1">
             {activeTab === 'orders' && (
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-                <h2 className="text-2xl font-bold text-gray-900 mb-6">Đơn hàng của tôi</h2>
+                <h2 className="text-2xl font-bold text-gray-900 mb-4">Đơn hàng của tôi</h2>
+                <div className="flex flex-wrap gap-2 mb-6 border-b pb-4">
+                  {ORDER_TABS.map(tab => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setOrderTab(tab.id)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-bold ${orderTab === tab.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
                 <div className="space-y-6">
                   {loading ? (
                     <p className="text-center text-gray-500">Đang tải lịch sử đơn hàng...</p>
@@ -125,7 +188,12 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
                       <div key={order.id} className="border border-gray-200 rounded-xl p-5 hover:border-blue-300 transition-colors">
                         <div className="flex flex-wrap justify-between items-start gap-4 mb-4 border-b border-gray-100 pb-4">
                           <div>
-                            <p className="font-bold text-gray-900">Mã đơn: <span className="text-blue-600">ORD-{String(order.id).padStart(4, '0')}</span></p>
+                            <p className="font-bold text-gray-900">
+                              Mã đơn:{' '}
+                              <button type="button" onClick={() => handleViewOrderDetail(order.id)} className="text-blue-600 hover:underline">
+                                ORD-{String(order.id).padStart(4, '0')}
+                              </button>
+                            </p>
                             <p className="text-sm text-gray-500 mt-1">Ngày đặt: {new Date(order.created_at).toLocaleDateString('vi-VN')}</p>
                           </div>
                           {getStatusBadge(order.status)}
@@ -140,9 +208,18 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
                             </div>
                           ))}
                         </div>
-                        <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center">
+                        <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center flex-wrap gap-2">
                           <span className="text-gray-500 font-medium">Tổng tiền:</span>
                           <span className="text-xl font-black text-gray-900">{order.total_amount.toLocaleString('vi-VN')}đ</span>
+                          {order.status === 'pending' && (
+                            <button
+                              type="button"
+                              onClick={() => setOrderToCancel(order)}
+                              className="text-sm text-red-600 font-bold hover:underline"
+                            >
+                              Hủy đơn hàng
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))
@@ -162,6 +239,41 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
           </div>
         </div>
       </div>
+
+      {selectedOrder && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl max-h-[80vh] overflow-y-auto">
+            <h2 className="text-xl font-bold mb-4">Chi tiết đơn ORD-{String(selectedOrder.id).padStart(4, '0')}</h2>
+            <p className="text-sm text-gray-500 mb-2">Trạng thái: {selectedOrder.status}</p>
+            <ul className="space-y-2 mb-4">
+              {selectedOrder.items?.map((item, i) => (
+                <li key={i} className="text-sm border-b pb-2">{item.quantity} x {item.product_name}</li>
+              ))}
+            </ul>
+            <p className="font-bold">Tổng: {selectedOrder.total_amount?.toLocaleString('vi-VN')}đ</p>
+            <button type="button" onClick={() => setSelectedOrder(null)} className="mt-4 w-full py-2 border rounded-xl font-bold">Đóng</button>
+          </div>
+        </div>
+      )}
+
+      {orderToCancel && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl">
+            <h2 className="text-xl font-bold mb-4">Hủy đơn ORD-{String(orderToCancel.id).padStart(4, '0')}</h2>
+            <textarea
+              rows={3}
+              className="w-full border p-3 rounded-xl mb-4"
+              placeholder="Nhập lý do hủy (bắt buộc)"
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+            />
+            <div className="flex gap-2">
+              <button type="button" onClick={() => { setOrderToCancel(null); setCancelReason(''); }} className="flex-1 py-2 border rounded-xl font-bold">Không</button>
+              <button type="button" onClick={handleCancelOrder} className="flex-1 py-2 bg-red-600 text-white rounded-xl font-bold">Xác nhận hủy</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Feedback Modal */}
       {showFeedbackModal && (

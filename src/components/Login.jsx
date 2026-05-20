@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { setToken } from '../lib/auth.js';
 import { Lock, Mail, User as UserIcon, ArrowRight, ArrowLeft, AlertCircle, KeyRound } from 'lucide-react';
 
 const Login = ({ onLoginSuccess, onBack }) => {
@@ -107,6 +108,10 @@ const Login = ({ onLoginSuccess, onBack }) => {
       setError('Định dạng Email không hợp lệ! (INT_LOGIN_07 / INT_REG_04)');
       return;
     }
+    if (mode === 'register' && password.length < 6) {
+      setError('Mật khẩu phải có ít nhất 6 ký tự! (INT_REG_06)');
+      return;
+    }
     if (mode === 'register' && password !== confirmPassword) {
       setError('Mật khẩu nhập lại không trùng khớp! (INT_REG_05)');
       return;
@@ -137,11 +142,7 @@ const Login = ({ onLoginSuccess, onBack }) => {
         switchMode('login');
       } else {
         // Đăng nhập thành công
-        if (rememberMe) {
-          localStorage.setItem('shoestore_token', data.access_token);
-        } else {
-          sessionStorage.setItem('token', data.access_token);
-        }
+        setToken(data.access_token, rememberMe);
         onLoginSuccess(data.access_token);
       }
     } catch (err) {

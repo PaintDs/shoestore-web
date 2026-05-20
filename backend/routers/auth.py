@@ -11,14 +11,16 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from database import get_db
+from core.config import (
+    SECRET_KEY,
+    DEBUG_MODE,
+    ALGORITHM,
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+)
 
 # ================= CONFIG & GLOBAL VARS =================
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-SECRET_KEY = "d5e4f3b2a1c0d9e8f7g6h5j4k3l2m1n0"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
 
@@ -115,6 +117,8 @@ async def get_it_user(current_user: dict = Depends(get_current_user)):
 
 @router.post("/register")
 def register(user: UserRegister, conn: sqlite3.Connection = Depends(get_db)):
+    if len(user.password) < 6:
+        raise HTTPException(status_code=400, detail="INT_REG_06: Mật khẩu phải có ít nhất 6 ký tự.")
     if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', user.email):
         raise HTTPException(status_code=422, detail="Invalid email format")
 
@@ -165,6 +169,24 @@ def read_users_me(current_user: dict = Depends(get_current_user)):
     user_info = {k: v for k, v in current_user.items() if k != 'password'}
     return user_info
 
+@router.get("/users/employees")
+def list_employees(
+    conn: sqlite3.Connection = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Danh sách nhân viên tính lương (sale, kho, ketoan) cho màn hình Quản lý lương."""
+    if current_user["role"] not in ("admin", "ketoan"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bạn không có quyền xem danh sách nhân viên.",
+        )
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, name, email, role, status FROM users WHERE role IN ('sale', 'kho', 'ketoan') ORDER BY name"
+    )
+    return [dict(row) for row in cursor.fetchall()]
+
+
 @router.get("/users")
 def get_all_users(conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_it_user)):
     """Endpoint để lấy danh sách người dùng cho màn hình RBAC của IT."""
@@ -185,7 +207,10 @@ def forgot_password(req: ForgotPasswordReq, conn: sqlite3.Connection = Depends(g
     otp = str(random.randint(100000, 999999))
     otp_store[req.email] = otp
     print(f"\n🔑 [MÃ OTP CỦA BẠN]: {otp} (Dành cho email: {req.email})\n")
-    return {"message": "Mã OTP đã được khởi tạo!", "otp_dev": otp}
+    payload = {"message": "Mã OTP đã được khởi tạo!"}
+    if DEBUG_MODE:
+        payload["otp_dev"] = otp
+    return payload
 
 @router.post("/reset-password")
 def reset_password(req: ResetPasswordReq, conn: sqlite3.Connection = Depends(get_db)):

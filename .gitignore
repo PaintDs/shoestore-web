@@ -28,3 +28,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .env
+backend/.venv/
+backend/shoestore.db
+shoestore.db

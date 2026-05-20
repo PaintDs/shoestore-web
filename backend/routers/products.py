@@ -15,7 +15,13 @@ router = APIRouter(
 # ================= MODELS =================
 
 class ProductCreate(BaseModel):
-    name: str; price: int; category: str; image: str; stock: int; bin: str
+    name: str
+    sku: str
+    price: int = Field(..., gt=0)
+    category: str
+    image: str = ""
+    stock: int = Field(..., ge=0)
+    bin: str = ""
 
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
@@ -45,39 +51,57 @@ def get_products(
     min_price: Optional[int] = None,
     max_price: Optional[int] = None,
     stock_lt: Optional[int] = None,
-    stock_gt: Optional[int] = None
+    stock_gt: Optional[int] = None,
+    status: Optional[str] = None,
 ):
     cursor = conn.cursor()
     query = "SELECT * FROM products WHERE 1=1"
     params = []
     if name:
-        query += " AND name LIKE ?"
-        params.append(f"%{name}%")
+        query += " AND (name LIKE ? OR sku LIKE ?)"
+        params.extend([f"%{name}%", f"%{name.upper()}%"])
     if category:
         query += " AND category = ?"
         params.append(category)
-    if min_price:
-        query += f" AND price >= {min_price}"
-    if max_price:
-        query += f" AND price <= {max_price}"
+    if min_price is not None:
+        query += " AND price >= ?"
+        params.append(min_price)
+    if max_price is not None:
+        query += " AND price <= ?"
+        params.append(max_price)
     if stock_lt is not None:
         query += " AND stock < ?"
         params.append(stock_lt)
     if stock_gt is not None:
         query += " AND stock > ?"
         params.append(stock_gt)
+    if status:
+        query += " AND COALESCE(status, 'active') = ?"
+        params.append(status)
         
     query += " ORDER BY id DESC"
     cursor.execute(query, params)
     return [dict(row) for row in cursor.fetchall()]
 
 @router.post("/products")
-def create_product(product: ProductCreate, conn: sqlite3.Connection = Depends(get_db)):
+def create_product(product: ProductCreate, conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    if current_user["role"] not in ["admin", "kho"]:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền thêm sản phẩm.")
+    if not product.name.strip() or not product.sku.strip():
+        raise HTTPException(status_code=400, detail="MGR_PROD_02: Tên và mã SKU là bắt buộc.")
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO products (name, price, category, image, stock, bin) VALUES (?, ?, ?, ?, ?, ?)", 
-                   (product.name, product.price, product.category, product.image, product.stock, product.bin))
-    conn.commit()
-    return {"message": "Thành công", "id": cursor.lastrowid}
+    cursor.execute("SELECT id FROM products WHERE sku = ?", (product.sku.strip().upper(),))
+    if cursor.fetchone():
+        raise HTTPException(status_code=400, detail="MGR_PROD_03: Mã SKU đã tồn tại.")
+    try:
+        cursor.execute(
+            "INSERT INTO products (name, sku, price, category, image, stock, bin, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'active')",
+            (product.name.strip(), product.sku.strip().upper(), product.price, product.category, product.image, product.stock, product.bin),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="MGR_PROD_03: Mã SKU đã tồn tại.")
+    return {"message": "MGR_PROD_01: Thêm sản phẩm thành công.", "id": cursor.lastrowid}
 
 @router.delete("/products/{product_id}")
 def delete_product(product_id: int, conn: sqlite3.Connection = Depends(get_db)):
@@ -141,7 +165,7 @@ def create_feedback(feedback: FeedbackCreate, conn: sqlite3.Connection = Depends
 
 @router.put("/feedback/{feedback_id}/process")
 def process_feedback(feedback_id: int, req: FeedbackProcess, conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    if current_user["role"] not in ["admin"]:
+    if current_user["role"] not in ["admin", "sale"]:
         raise HTTPException(status_code=403, detail="Bạn không có quyền xử lý phản hồi.")
     
     cursor = conn.cursor()

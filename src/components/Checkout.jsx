@@ -8,6 +8,8 @@ const Checkout = ({ onBack, cartItems, onCheckoutSuccess, currentUser }) => {
     address: ''
   });
   const [paymentMethod, setPaymentMethod] = useState('COD');
+  const [voucherCode, setVoucherCode] = useState('');
+  const [discount, setDiscount] = useState(0);
   const [error, setError] = useState('');
 
   const handleInputChange = (e) => {
@@ -23,7 +25,33 @@ const Checkout = ({ onBack, cartItems, onCheckoutSuccess, currentUser }) => {
 
   const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const shippingFee = subtotal > 0 ? 30000 : 0;
-  const total = subtotal + shippingFee;
+  const total = Math.max(subtotal + shippingFee - discount, 0);
+
+  const handleApplyVoucher = async () => {
+    const code = voucherCode.trim();
+    if (!code) {
+      alert('Vui lòng nhập mã giảm giá.');
+      return;
+    }
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      const response = await fetch('/api/apply-voucher', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ voucher_code: code, cart_total: subtotal }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Mã không hợp lệ.');
+      setDiscount(data.discount_amount || 0);
+      alert(`Áp dụng mã thành công! Giảm ${(data.discount_amount || 0).toLocaleString('vi-VN')}đ`);
+    } catch (err) {
+      setDiscount(0);
+      alert(err.message);
+    }
+  };
 
   const handleCheckoutSubmit = async (e) => {
     e.preventDefault();
@@ -47,6 +75,7 @@ const Checkout = ({ onBack, cartItems, onCheckoutSuccess, currentUser }) => {
         address: customerInfo.address,
         payment_method: paymentMethod,
         cart_items: cartItems,
+        voucher_code: voucherCode.trim() || null,
       };
 
       const response = await fetch('/api/checkout', {
@@ -70,6 +99,9 @@ const Checkout = ({ onBack, cartItems, onCheckoutSuccess, currentUser }) => {
       }
 
       const data = await response.json();
+      if (paymentMethod === 'Online' && data.payment_url) {
+        window.open(data.payment_url, '_blank');
+      }
       alert(data.message || "🎉 Đặt hàng thành công! Đơn hàng của bạn đang chờ xác nhận.");
       onCheckoutSuccess();
     } catch (err) {
@@ -118,9 +150,21 @@ const Checkout = ({ onBack, cartItems, onCheckoutSuccess, currentUser }) => {
               <div className="space-y-4 text-sm mb-6 border-b border-gray-100 pb-6">
                 <div className="flex justify-between"><span className="text-gray-600">Tạm tính ({cartItems.length} sản phẩm)</span><span className="font-medium text-gray-900">{subtotal.toLocaleString('vi-VN')}đ</span></div>
                 <div className="flex justify-between"><span className="text-gray-600">Phí vận chuyển</span><span className="font-medium text-gray-900">{shippingFee.toLocaleString('vi-VN')}đ</span></div>
-                <div className="flex justify-between items-center pt-2">
-                  <input type="text" placeholder="Mã giảm giá" className="w-2/3 p-2 border border-gray-200 rounded-lg outline-none focus:border-blue-500" />
-                  <button type="button" onClick={() => alert("Mã Voucher không hợp lệ! (INT_PAY_04)")} className="text-blue-600 font-bold text-sm hover:underline">Áp dụng</button>
+                {discount > 0 && (
+                  <div className="flex justify-between text-green-600">
+                    <span>Giảm giá voucher</span>
+                    <span>-{discount.toLocaleString('vi-VN')}đ</span>
+                  </div>
+                )}
+                <div className="flex justify-between items-center pt-2 gap-2">
+                  <input
+                    type="text"
+                    value={voucherCode}
+                    onChange={(e) => setVoucherCode(e.target.value)}
+                    placeholder="Mã giảm giá"
+                    className="flex-1 p-2 border border-gray-200 rounded-lg outline-none focus:border-blue-500"
+                  />
+                  <button type="button" onClick={handleApplyVoucher} className="text-blue-600 font-bold text-sm hover:underline whitespace-nowrap">Áp dụng</button>
                 </div>
               </div>
               <div className="flex justify-between items-end mb-8">

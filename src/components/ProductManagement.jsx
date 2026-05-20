@@ -13,7 +13,7 @@ const ProductManagement = ({ onBack }) => {
   // State cho Modal thêm sản phẩm
   const [showAddModal, setShowAddModal] = useState(false);
   const [productForm, setProductForm] = useState({
-    name: '', price: '', category: 'Lifestyle', image: '', stock: 0, bin: ''
+    name: '', sku: '', price: '', category: 'Lifestyle', image: '', stock: 0, bin: ''
   });
   const [modalError, setModalError] = useState('');
 
@@ -68,10 +68,15 @@ const ProductManagement = ({ onBack }) => {
         stock: parseInt(productForm.stock, 10)
       };
 
-      if (isNaN(payload.price) || isNaN(payload.stock) || payload.price <= 0) {
-        setModalError('Giá và tồn kho phải là số hợp lệ (giá > 0).');
+      if (!productForm.name.trim() || !productForm.sku.trim()) {
+        setModalError('MGR_PROD_02: Tên và mã SKU là bắt buộc.');
         return;
       }
+      if (isNaN(payload.price) || isNaN(payload.stock) || payload.price <= 0) {
+        setModalError('MGR_PROD_05: Giá và tồn kho phải là số hợp lệ (giá > 0).');
+        return;
+      }
+      payload.sku = productForm.sku.trim().toUpperCase();
 
       const response = await fetch('/api/products', {
         method: 'POST',
@@ -84,7 +89,7 @@ const ProductManagement = ({ onBack }) => {
 
       alert('Thêm sản phẩm mới thành công!');
       setShowAddModal(false);
-      setProductForm({ name: '', price: '', category: 'Lifestyle', image: '', stock: 0, bin: '' });
+      setProductForm({ name: '', sku: '', price: '', category: 'Lifestyle', image: '', stock: 0, bin: '' });
       fetchProducts();
     } catch (err) {
       setModalError(err.message);
@@ -216,6 +221,10 @@ const ProductManagement = ({ onBack }) => {
                 <div>
                   <label className="block text-sm font-semibold mb-1">Tên sản phẩm</label>
                   <input required name="name" value={productForm.name} onChange={handleFormChange} className="w-full border p-2.5 rounded-xl outline-none focus:border-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold mb-1">Mã SKU</label>
+                  <input required name="sku" value={productForm.sku} onChange={handleFormChange} className="w-full border p-2.5 rounded-xl outline-none focus:border-blue-500" placeholder="VD: AF1-07-W" />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold mb-1">Giá bán (VNĐ)</label>

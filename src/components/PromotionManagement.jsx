@@ -21,7 +21,7 @@ const PromotionManagement = ({ onBack }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('http://localhost:8000/api/promotions', { headers });
+      const response = await fetch('/api/promotions', { headers });
       if (!response.ok) {
         throw new Error(`Lỗi khi tải khuyến mãi: ${response.statusText}`);
       }
@@ -50,7 +50,7 @@ const PromotionManagement = ({ onBack }) => {
         end_date: newPromotionForm.end_date.replace('T', ' '),
       };
 
-      const response = await fetch('http://localhost:8000/api/promotions', {
+      const response = await fetch('/api/promotions', {
         method: 'POST',
         headers,
         body: JSON.stringify(promoData)
@@ -71,7 +71,7 @@ const PromotionManagement = ({ onBack }) => {
   const handleEndPromotionEarly = async (promoId) => {
     if (!window.confirm('Bạn có chắc chắn muốn kết thúc sớm khuyến mãi này?')) return;
     try {
-      const response = await fetch(`http://localhost:8000/api/promotions/${promoId}/end`, {
+      const response = await fetch(`/api/promotions/${promoId}/end`, {
         method: 'POST',
         headers
       });

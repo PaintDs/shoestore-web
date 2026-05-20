@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db as initialize_database
 from fastapi.responses import FileResponse
@@ -10,6 +10,7 @@ from routers.products import router as products_router
 from routers.orders import router as orders_router
 from routers.warehouse import router as warehouse_router
 from routers.accounting import router as accounting_router
+from routers.payroll import router as payroll_router
 from routers.system import router as system_router
 
 app = FastAPI(
@@ -35,6 +36,7 @@ app.include_router(products_router)
 app.include_router(orders_router)
 app.include_router(warehouse_router)
 app.include_router(accounting_router)
+app.include_router(payroll_router)
 app.include_router(system_router)
 
 # Cấu hình phục vụ file tĩnh và SPA (Single Page Application)
