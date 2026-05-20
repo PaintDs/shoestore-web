@@ -1,14 +1,15 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { Search, ShoppingCart, User, Heart, LogOut } from 'lucide-react';
 
-const Header = ({ onCartClick, onLoginClick, currentUser, onLogout, onUserClick, cartCount, onSearch }) => {
+const Header = ({ onCartClick, onLoginClick, currentUser, onLogout, onProfileClick, cartCount, onSearch }) => {
   return (
     <nav className="bg-white border-b border-gray-100 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-20">
-          <div className="flex-shrink-0 flex items-center">
+          <Link to="/" className="flex-shrink-0 flex items-center">
             <span className="text-2xl font-black text-gray-900 tracking-tighter">SHOE<span className="text-blue-600">STORE.</span></span>
-          </div>
+          </Link>
 
           {/* Thanh tìm kiếm hoạt động (Search Logic) */}
           <div className="flex-1 max-w-lg mx-8 hidden md:block">
@@ -37,7 +38,7 @@ const Header = ({ onCartClick, onLoginClick, currentUser, onLogout, onUserClick,
             
             {currentUser ? (
               <div className="flex items-center gap-4">
-                <button onClick={onUserClick} className="font-semibold text-sm text-blue-600 hover:underline">
+                <button onClick={onProfileClick} className="font-semibold text-sm text-blue-600 hover:underline">
                   Chào, {currentUser.name}
                 </button>
                 <button onClick={onLogout} className="text-gray-400 hover:text-red-500 transition-colors"><LogOut className="w-5 h-5"/></button>

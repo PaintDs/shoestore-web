@@ -1,14 +1,75 @@
-import React, { useState } from 'react';
-import { User, Package, MapPin, LogOut, ArrowLeft, CheckCircle, Clock, Truck } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { User, Package, MapPin, LogOut, ArrowLeft, CheckCircle, Clock, Truck, Star, Send } from 'lucide-react';
 
 const UserProfile = ({ currentUser, onBack, onLogout }) => {
   const [activeTab, setActiveTab] = useState('orders'); // 'orders' hoặc 'info'
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  // Giả lập dữ liệu lịch sử đơn hàng của khách
-  const myOrders = [
-    { id: "ORD-2026-001", date: "09/05/2026", total: "5.230.000đ", status: "shipping", items: ["Air Jordan 1 Retro High (Size 42)"] },
-    { id: "ORD-2026-089", date: "15/04/2026", total: "3.400.000đ", status: "completed", items: ["Nike Pegasus 40 (Size 41)"] }
-  ];
+  // State for feedback modal
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [currentProductToReview, setCurrentProductToReview] = useState(null);
+  const [feedbackForm, setFeedbackForm] = useState({ rating: 5, comment: '' });
+
+  useEffect(() => {
+    const fetchUserOrders = async () => {
+      if (!currentUser) return;
+      setLoading(true);
+      try {
+        const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+        const response = await fetch('/api/user/orders', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!response.ok) throw new Error('Không thể tải lịch sử đơn hàng.');
+        const data = await response.json();
+        setOrders(Array.isArray(data) ? data : []);
+      } catch (error) {
+        console.error("Lỗi tải đơn hàng:", error);
+        setOrders([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchUserOrders();
+  }, [currentUser]);
+
+  const handleOpenFeedbackModal = (product) => {
+    setCurrentProductToReview(product);
+    setFeedbackForm({ rating: 5, comment: '' });
+    setShowFeedbackModal(true);
+  };
+
+  const handleSendFeedback = async (e) => {
+    e.preventDefault();
+    if (!currentProductToReview) return;
+
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      const payload = {
+        product_id: currentProductToReview.product_id,
+        rating: parseInt(feedbackForm.rating, 10),
+        comment: feedbackForm.comment
+      };
+
+      const response = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Gửi phản hồi thất bại.');
+
+      alert('Cảm ơn bạn đã đánh giá!');
+      setShowFeedbackModal(false);
+    } catch (error) {
+      alert(`Lỗi: ${error.message}`);
+    }
+  };
 
   const getStatusBadge = (status) => {
     switch(status) {
@@ -55,28 +116,37 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                 <h2 className="text-2xl font-bold text-gray-900 mb-6">Đơn hàng của tôi</h2>
                 <div className="space-y-6">
-                  {myOrders.map((order, idx) => (
-                    <div key={idx} className="border border-gray-200 rounded-xl p-5 hover:border-blue-300 transition-colors">
-                      <div className="flex flex-wrap justify-between items-start gap-4 mb-4 border-b border-gray-100 pb-4">
-                        <div>
-                          <p className="font-bold text-gray-900">Mã đơn: <span className="text-blue-600">{order.id}</span></p>
-                          <p className="text-sm text-gray-500 mt-1">Ngày đặt: {order.date}</p>
-                        </div>
-                        {getStatusBadge(order.status)}
-                      </div>
-                      <div className="space-y-2">
-                        {order.items.map((item, i) => (
-                          <div key={i} className="flex justify-between items-center text-sm font-medium text-gray-700">
-                            <span>1 x {item}</span>
+                  {loading ? (
+                    <p className="text-center text-gray-500">Đang tải lịch sử đơn hàng...</p>
+                  ) : orders.length === 0 ? (
+                    <p className="text-center text-gray-500">Bạn chưa có đơn hàng nào.</p>
+                  ) : (
+                    orders.map((order) => (
+                      <div key={order.id} className="border border-gray-200 rounded-xl p-5 hover:border-blue-300 transition-colors">
+                        <div className="flex flex-wrap justify-between items-start gap-4 mb-4 border-b border-gray-100 pb-4">
+                          <div>
+                            <p className="font-bold text-gray-900">Mã đơn: <span className="text-blue-600">ORD-{String(order.id).padStart(4, '0')}</span></p>
+                            <p className="text-sm text-gray-500 mt-1">Ngày đặt: {new Date(order.created_at).toLocaleDateString('vi-VN')}</p>
                           </div>
-                        ))}
+                          {getStatusBadge(order.status)}
+                        </div>
+                        <div className="space-y-3">
+                          {order.items && order.items.map((item, i) => (
+                            <div key={i} className="flex justify-between items-center text-sm">
+                              <span className="font-medium text-gray-700">{item.quantity} x {item.product_name}</span>
+                              {order.status === 'completed' && (
+                                <button onClick={() => handleOpenFeedbackModal(item)} className="bg-blue-500 hover:bg-blue-600 text-white text-xs font-bold py-1 px-3 rounded-full transition-colors">Đánh giá</button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center">
+                          <span className="text-gray-500 font-medium">Tổng tiền:</span>
+                          <span className="text-xl font-black text-gray-900">{order.total_amount.toLocaleString('vi-VN')}đ</span>
+                        </div>
                       </div>
-                      <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center">
-                        <span className="text-gray-500 font-medium">Tổng tiền:</span>
-                        <span className="text-xl font-black text-gray-900">{order.total}</span>
-                      </div>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </div>
             )}
@@ -92,6 +162,47 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
           </div>
         </div>
       </div>
+
+      {/* Feedback Modal */}
+      {showFeedbackModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl">
+            <h2 className="text-xl font-bold mb-2">Đánh giá sản phẩm</h2>
+            <p className="font-medium text-gray-800 mb-4">{currentProductToReview?.product_name}</p>
+            <form onSubmit={handleSendFeedback}>
+              <div className="mb-4">
+                <label className="block text-sm font-semibold mb-2">Bạn cảm thấy thế nào về sản phẩm?</label>
+                <div className="flex gap-1">
+                  {[1, 2, 3, 4, 5].map(star => (
+                    <Star
+                      key={star}
+                      className={`w-8 h-8 cursor-pointer transition-colors ${feedbackForm.rating >= star ? 'text-yellow-400 fill-yellow-400' : 'text-gray-300 hover:text-yellow-300'}`}
+                      onClick={() => setFeedbackForm({ ...feedbackForm, rating: star })}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div className="mb-6">
+                <label className="block text-sm font-semibold mb-2">Bình luận của bạn:</label>
+                <textarea
+                  rows="4"
+                  className="w-full border p-2.5 rounded-xl outline-none focus:border-blue-500"
+                  value={feedbackForm.comment}
+                  onChange={e => setFeedbackForm({ ...feedbackForm, comment: e.target.value })}
+                  placeholder="Chia sẻ cảm nhận của bạn về sản phẩm..."
+                  required
+                />
+              </div>
+              <div className="flex justify-end gap-3">
+                <button type="button" onClick={() => setShowFeedbackModal(false)} className="px-6 py-2 border rounded-xl font-bold text-gray-600 hover:bg-gray-50">Hủy</button>
+                <button type="submit" className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center gap-2">
+                  <Send className="w-4 h-4" /> Gửi đánh giá
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

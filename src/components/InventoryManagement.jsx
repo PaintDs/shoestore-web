@@ -1,300 +1,642 @@
-import React, { useState } from 'react';
-import { PackageSearch, ArrowLeft, Plus, ArrowDownToLine, ArrowUpFromLine, ClipboardCheck, RotateCcw, Boxes, X, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ArrowLeft, PlusCircle, Package, History, Box, Truck, RefreshCw, AlertTriangle } from 'lucide-react';
 
 const InventoryManagement = ({ onBack }) => {
-  const [activeTab, setActiveTab] = useState('products'); // products, transactions, audit, returns
-
-  // ================= STATE DỮ LIỆU KHO =================
-  // 1. Dữ liệu Hàng hóa & Vị trí lưu trữ (Location/Bin)
-  const [products, setProducts] = useState([
-    { id: "SP-001", name: "Air Jordan 1 Retro High", stock: 45, bin: "A1-Kệ 01", status: "Bình thường" },
-    { id: "SP-002", name: "Adidas Ultraboost Light", stock: 12, bin: "B2-Kệ 03", status: "Sắp hết" },
-    { id: "SP-003", name: "Nike Pegasus 40", stock: 0, bin: "A2-Kệ 02", status: "Hết hàng" },
-  ]);
-
-  // 2. Lịch sử Nhập / Xuất kho
-  const [transactions, setTransactions] = useState([
-    { id: "PN-052026-01", date: "09/05/2026", type: "Nhập kho", sku: "SP-001", qty: "+50", note: "Nhập từ nhà cung cấp Nike VN" },
-    { id: "PX-052026-01", date: "09/05/2026", type: "Xuất kho", sku: "SP-002", qty: "-2", note: "Xuất giao đơn vị vận chuyển J&T" },
-  ]);
-
-  // 3. Lịch sử Kiểm kê
-  const [audits, setAudits] = useState([
-    { id: "KK-042026", date: "30/04/2026", sku: "SP-002", sysQty: 14, actualQty: 12, diff: -2, note: "Thất thoát chưa rõ nguyên nhân" },
-  ]);
-
-  // 4. Lịch sử Hàng hoàn
-  const [returns, setReturns] = useState([
-    { id: "TH-001", orderId: "ORD-2026-089", date: "08/05/2026", sku: "SP-001", reason: "Khách đổi size", qcStatus: "Đủ điều kiện", action: "Nhập lại kệ" },
-    { id: "TH-002", orderId: "ORD-2026-092", date: "09/05/2026", sku: "SP-002", reason: "Lỗi keo dán", qcStatus: "Hư hỏng", action: "Chuyển kho lỗi" },
-  ]);
-
-  // ================= STATE MODAL (POPUP) =================
-  const [showTxModal, setShowTxModal] = useState(false);
-  const [showReturnModal, setShowReturnModal] = useState(false);
-
-  const [txForm, setTxForm] = useState({ type: 'Nhập kho', sku: '', qty: '', note: '' });
-  const [returnForm, setReturnForm] = useState({ orderId: '', sku: '', reason: '', qcStatus: 'Đủ điều kiện' });
-
-  // ================= LOGIC XỬ LÝ =================
-  const handleAddTransaction = (e) => {
-    e.preventDefault();
-    const newId = txForm.type === 'Nhập kho' ? `PN-052026-${Math.floor(Math.random()*100)}` : `PX-052026-${Math.floor(Math.random()*100)}`;
-    const formattedQty = txForm.type === 'Nhập kho' ? `+${txForm.qty}` : `-${txForm.qty}`;
-    
-    setTransactions([{ id: newId, date: "09/05/2026", type: txForm.type, sku: txForm.sku, qty: formattedQty, note: txForm.note }, ...transactions]);
-    setShowTxModal(false);
-    setTxForm({ type: 'Nhập kho', sku: '', qty: '', note: '' });
+  const [activeTab, setActiveTab] = useState('inbound'); // 'inbound', 'outbound', 'inventory', 'count', 'returns'
+  const [inboundHistory, setInboundHistory] = useState([]);
+  const [countHistory, setCountHistory] = useState([]); // State mới cho lịch sử kiểm kê
+  const [selectedProductIdCount, setSelectedProductIdCount] = useState(''); // State cho form kiểm kê
+  const [actualQty, setActualQty] = useState(''); // State cho số lượng thực tế
+  const [countReason, setCountReason] = useState(''); // State cho lý do kiểm kê
+  const [pendingOrders, setPendingOrders] = useState([]); // State mới cho đơn hàng chờ xuất
+  const [products, setProducts] = useState([]); // To populate product dropdown in inbound form
+  const [returnsHistory, setReturnsHistory] = useState([]);
+  const [selectedProductId, setSelectedProductId] = useState(''); // State cho form nhập kho
+  // Helper function for order ID formatting
+  const formatOrderId = (id) => {
+    return `ORD-2026-${id.toString().padStart(3, '0')}`;
   };
 
-  const handleAddReturn = (e) => {
+  // State for the inbound form
+  const [inboundQuantity, setInboundQuantity] = useState('');
+
+  const fetchProducts = async () => {
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      const response = await fetch('/api/products', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      setProducts(data);
+    } catch (error) {
+      console.error("Lỗi khi lấy danh sách sản phẩm:", error);
+    }
+  };
+
+  const fetchInboundHistory = async () => {
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      const response = await fetch('/api/warehouse/inbound/history', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      console.log("=== DATA LỊCH SỬ TỪ BACKEND ===", data); // For debugging as requested
+      setInboundHistory(data);
+    } catch (error) {
+      console.error("Lỗi khi lấy lịch sử nhập kho:", error);
+      alert("Không thể tải lịch sử nhập kho. Vui lòng thử lại.");
+    }
+  };
+
+  const fetchReturnsHistory = async () => {
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      const response = await fetch('/api/warehouse/returns/history', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        // Nếu response không OK, ném lỗi để block catch xử lý, tránh set state bằng object lỗi
+        const errorData = await response.json().catch(() => ({ detail: 'Lỗi không xác định từ server.' }));
+        throw new Error(errorData.detail || 'Không thể tải lịch sử hàng hoàn.');
+      }
+      const data = await response.json();
+      setReturnsHistory(data);
+    } catch (error) {
+      console.error("Lỗi khi lấy lịch sử hàng hoàn:", error);
+      setReturnsHistory([]); // Đảm bảo là mảng rỗng khi có lỗi để tránh crash
+    }
+  };
+
+  // Hàm mới: Lấy lịch sử kiểm kê
+  const fetchCountHistory = async () => {
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      const response = await fetch('/api/warehouse/inventory-count', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Lỗi không xác định từ server.' }));
+        throw new Error(errorData.detail || 'Không thể tải lịch sử kiểm kê.');
+      }
+      const data = await response.json();
+      setCountHistory(data);
+    } catch (error) {
+      console.error("Lỗi khi lấy lịch sử kiểm kê:", error);
+      setCountHistory([]); // Đảm bảo là mảng rỗng khi có lỗi
+    }
+  };
+
+  // Hàm mới: Lấy danh sách đơn hàng chờ xuất kho
+  const fetchPendingOrders = async () => {
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      const response = await fetch('/api/orders?status=confirmed', { // Lấy các đơn hàng đã được xác nhận
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Lỗi không xác định từ server.' }));
+        throw new Error(errorData.detail || 'Không thể tải danh sách đơn hàng chờ xuất.');
+      }
+      const data = await response.json();
+      setPendingOrders(data);
+    } catch (error) {
+      console.error("Lỗi khi lấy danh sách đơn hàng chờ xuất:", error);
+      setPendingOrders([]); // Đảm bảo là mảng rỗng khi có lỗi
+    }
+  };
+
+  useEffect(() => {
+    fetchProducts();
+    if (activeTab === 'inbound') {
+      fetchInboundHistory();
+    } else if (activeTab === 'returns') {
+      fetchReturnsHistory();
+    }
+    else if (activeTab === 'outbound') { // Gọi hàm mới khi tab Xuất kho được chọn
+      fetchPendingOrders();
+    }
+    else if (activeTab === 'count') { // Gọi hàm mới khi tab Kiểm kê được chọn
+      fetchCountHistory();
+    }
+  }, [activeTab]);
+
+  // Logic cho nút "Xác nhận xuất kho"
+  const handleConfirmOutbound = async (orderId) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn xác nhận xuất kho cho đơn hàng ${formatOrderId(orderId)}?`)) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      if (!token) {
+        alert("Vui lòng đăng nhập lại để thực hiện hành động này.");
+        return;
+      }
+
+      const response = await fetch(`/api/warehouse/outbound/order/${orderId}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Xác nhận xuất kho thất bại.');
+      alert(data.message);
+      await fetchPendingOrders(); // Tải lại danh sách đơn hàng chờ xuất
+    } catch (error) {
+      alert(`Lỗi: ${error.message}`);
+    }
+  };
+
+  // Logic cho việc thực hiện kiểm kê
+  const handlePerformInventoryCount = async (e) => {
     e.preventDefault();
-    const action = returnForm.qcStatus === 'Đủ điều kiện' ? 'Nhập lại kệ' : 'Chuyển kho lỗi';
-    setReturns([{ id: `TH-00${Math.floor(Math.random()*100)}`, date: "09/05/2026", ...returnForm, action }, ...returns]);
-    setShowReturnModal(false);
-    setReturnForm({ orderId: '', sku: '', reason: '', qcStatus: 'Đủ điều kiện' });
+    if (!selectedProductIdCount || !actualQty || parseInt(actualQty) < 0) {
+      alert("Vui lòng chọn sản phẩm và nhập số lượng thực tế hợp lệ.");
+      return;
+    }
+
+    const productToCount = products.find(p => p.id.toString() === selectedProductIdCount);
+    if (!productToCount) {
+      alert("Sản phẩm được chọn không hợp lệ.");
+      return;
+    }
+
+    // system_qty và difference sẽ được tính ở backend
+    const actual_qty_int = parseInt(actualQty);
+
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      if (!token) {
+        alert("Vui lòng đăng nhập lại để thực hiện hành động này.");
+        return;
+      }
+
+      const response = await fetch('/api/warehouse/inventory-count', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          product_id: parseInt(selectedProductIdCount),
+          actual_qty: actual_qty_int,
+          reason: countReason.trim() || 'Không có lý do cụ thể'
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Thực hiện kiểm kê thất bại.');
+      }
+
+      alert(data.message);
+      setSelectedProductIdCount('');
+      setActualQty('');
+      setCountReason('');
+      await fetchProducts(); // Cập nhật lại danh sách sản phẩm để hiển thị tồn kho mới
+      await fetchCountHistory(); // Cập nhật lại lịch sử kiểm kê
+    } catch (error) {
+      console.error("Lỗi khi thực hiện kiểm kê:", error);
+      alert(`Lỗi: ${error.message}`);
+    }
+  };
+
+  // Hàm mới: Xử lý hàng hoàn (Nhập lại kho)
+  const handleProcessReturn = async (item) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn nhập lại kho sản phẩm "${item.product_name}" (Số lượng: ${item.quantity})?`)) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      if (!token) {
+        alert("Vui lòng đăng nhập lại để thực hiện hành động này.");
+        return;
+      }
+
+      // Payload cho POST /api/warehouse/returns
+      // Giả định 'Nhập lại kho' có nghĩa là hàng tốt và cần cộng lại tồn kho
+      const payload = {
+        product_id: item.product_id,
+        quantity: item.quantity,
+        reason: 'good' // Lý do 'good' sẽ khiến backend cộng lại tồn kho
+      };
+
+      const response = await fetch('/api/warehouse/returns', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Xử lý hàng hoàn thất bại.');
+      alert(data.message);
+      fetchReturnsHistory(); // Gọi lại hàm lấy lịch sử để cập nhật UI
+    } catch (error) {
+      console.error("Lỗi khi xử lý hàng hoàn:", error);
+      alert(`Lỗi: ${error.message}`);
+    }
+  };
+
+  const handleCreateInboundSlip = async (e) => {
+    e.preventDefault();
+    if (!selectedProductId || !inboundQuantity || inboundQuantity <= 0) {
+      alert("Vui lòng chọn sản phẩm và nhập số lượng hợp lệ.");
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      if (!token) {
+        alert("Vui lòng đăng nhập lại để thực hiện hành động này.");
+        return;
+      }
+
+      const response = await fetch('/api/warehouse/inbound', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          product_id: parseInt(selectedProductId),
+          quantity: parseInt(inboundQuantity)
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || 'Không thể tạo phiếu nhập kho.');
+      }
+
+      alert(data.message);
+      setSelectedProductId(''); // Reset state cho form nhập kho
+      setInboundQuantity('');
+      await fetchInboundHistory(); // Re-fetch history to update the table
+    } catch (error) {
+      console.error("Lỗi khi tạo phiếu nhập kho:", error);
+      alert(`Lỗi: ${error.message}`);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="min-h-screen bg-gray-100 flex flex-col">
+      {/* Header */}
       <header className="bg-slate-900 text-white p-4 shadow-md flex justify-between items-center">
         <div className="flex items-center gap-4">
           <button onClick={onBack} className="p-2 hover:bg-slate-800 rounded-lg transition-colors"><ArrowLeft className="w-5 h-5" /></button>
-          <h1 className="text-xl font-bold flex items-center gap-2"><PackageSearch className="w-6 h-6 text-orange-400" /> Quản trị Kho bãi</h1>
+          <h1 className="text-xl font-bold flex items-center gap-2"><Box className="w-6 h-6 text-orange-400" /> Quản lý Kho</h1>
         </div>
         <div className="flex items-center gap-3 text-sm">
-          <span className="bg-orange-600 px-3 py-1.5 rounded-lg font-medium">Trưởng kho</span>
+          <span className="bg-orange-600 px-3 py-1.5 rounded-lg font-medium">Ca trực: Kho</span>
+          <span>Admin</span>
         </div>
       </header>
 
-      <main className="flex-1 p-6 max-w-7xl mx-auto w-full">
-        {/* Báo cáo nhanh trên cùng */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
-            <p className="text-gray-500 text-sm font-medium mb-1">Tổng Tồn Kho</p>
-            <p className="text-2xl font-black text-gray-900">1,248 SP</p>
-          </div>
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-orange-200 bg-orange-50/30">
-            <p className="text-orange-600 text-sm font-medium mb-1">Cảnh báo Sắp hết / Hết hàng</p>
-            <p className="text-2xl font-black text-orange-700">15 SP</p>
-          </div>
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-red-200 bg-red-50/30">
-            <p className="text-red-600 text-sm font-medium mb-1">Hàng lưu Kho Lỗi</p>
-            <p className="text-2xl font-black text-red-700">23 SP</p>
-          </div>
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-blue-200 bg-blue-50/30">
-            <p className="text-blue-600 text-sm font-medium mb-1">Tỷ lệ Lệch kiểm kê</p>
-            <p className="text-2xl font-black text-blue-700">0.2%</p>
-          </div>
-        </div>
-
-        {/* Menu Tabs */}
-        <div className="flex gap-4 mb-6 border-b border-gray-200 pb-4 overflow-x-auto">
-          <button onClick={() => setActiveTab('products')} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all whitespace-nowrap ${activeTab === 'products' ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>
-            <Boxes className="w-5 h-5" /> Hàng hóa & Vị trí
-          </button>
-          <button onClick={() => setActiveTab('transactions')} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all whitespace-nowrap ${activeTab === 'transactions' ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>
-            <ArrowUpFromLine className="w-5 h-5" /> Nhập / Xuất kho
-          </button>
-          <button onClick={() => setActiveTab('audit')} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all whitespace-nowrap ${activeTab === 'audit' ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>
-            <ClipboardCheck className="w-5 h-5" /> Kiểm kê định kỳ
-          </button>
-          <button onClick={() => setActiveTab('returns')} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all whitespace-nowrap ${activeTab === 'returns' ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>
-            <RotateCcw className="w-5 h-5" /> Xử lý Hàng hoàn
-          </button>
-        </div>
-
-        {/* NỘI DUNG TABS */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden min-h-[400px]">
-          
-          {/* TAB 1: SẮP XẾP & HÀNG HÓA */}
-          {activeTab === 'products' && (
-            <>
-              <div className="p-5 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
-                <h2 className="text-lg font-bold text-gray-900">Danh sách & Vị trí Lưu trữ (Bin Location)</h2>
-              </div>
-              <table className="w-full text-left">
-                <thead className="bg-gray-50 text-gray-500 text-sm border-b">
-                  <tr><th className="p-4">Mã SKU</th><th className="p-4">Tên sản phẩm</th><th className="p-4">Tồn kho</th><th className="p-4">Vị trí Kệ (Bin)</th><th className="p-4">Trạng thái</th></tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {products.map((p, i) => (
-                    <tr key={i} className="hover:bg-gray-50">
-                      <td className="p-4 font-bold">{p.id}</td>
-                      <td className="p-4 font-medium">{p.name}</td>
-                      <td className="p-4 font-black text-gray-900">{p.stock}</td>
-                      <td className="p-4 text-orange-600 font-bold">{p.bin}</td>
-                      <td className="p-4">
-                        <span className={`px-2 py-1 rounded text-xs font-bold ${p.status === 'Bình thường' ? 'bg-green-100 text-green-700' : p.status === 'Sắp hết' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>{p.status}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-
-          {/* TAB 2: QUẢN LÝ NHẬP XUẤT */}
-          {activeTab === 'transactions' && (
-            <>
-              <div className="p-5 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
-                <h2 className="text-lg font-bold text-gray-900">Lịch sử Lập Phiếu Nhập / Xuất</h2>
-                <button onClick={() => setShowTxModal(true)} className="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2">
-                  <Plus className="w-5 h-5" /> Lập Phiếu Mới
-                </button>
-              </div>
-              <table className="w-full text-left">
-                <thead className="bg-gray-50 text-gray-500 text-sm border-b">
-                  <tr><th className="p-4">Mã Phiếu</th><th className="p-4">Ngày giờ</th><th className="p-4">Loại hình</th><th className="p-4">Mã SKU</th><th className="p-4">Số lượng</th><th className="p-4">Ghi chú</th></tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {transactions.map((tx, i) => (
-                    <tr key={i} className="hover:bg-gray-50">
-                      <td className="p-4 font-bold text-gray-900">{tx.id}</td>
-                      <td className="p-4 text-sm">{tx.date}</td>
-                      <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold ${tx.type === 'Nhập kho' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>{tx.type}</span></td>
-                      <td className="p-4 font-medium">{tx.sku}</td>
-                      <td className={`p-4 font-black ${tx.type === 'Nhập kho' ? 'text-blue-600' : 'text-orange-600'}`}>{tx.qty}</td>
-                      <td className="p-4 text-sm text-gray-500">{tx.note}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-
-          {/* TAB 3: KIỂM KÊ */}
-          {activeTab === 'audit' && (
-            <>
-              <div className="p-5 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
-                <h2 className="text-lg font-bold text-gray-900">Kết quả Kiểm kê định kỳ</h2>
-                <button className="bg-gray-800 hover:bg-gray-900 text-white px-4 py-2 rounded-lg font-bold">Lập Biên bản Kiểm kê</button>
-              </div>
-              <table className="w-full text-left">
-                <thead className="bg-gray-50 text-gray-500 text-sm border-b">
-                  <tr><th className="p-4">Mã Phiếu KK</th><th className="p-4">Ngày kiểm</th><th className="p-4">Mã SKU</th><th className="p-4 text-center">Tồn PM</th><th className="p-4 text-center">Tồn Thực tế</th><th className="p-4 text-center">Chênh lệch</th><th className="p-4">Nguyên nhân</th></tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {audits.map((a, i) => (
-                    <tr key={i} className="hover:bg-gray-50">
-                      <td className="p-4 font-bold">{a.id}</td>
-                      <td className="p-4 text-sm">{a.date}</td>
-                      <td className="p-4 font-medium">{a.sku}</td>
-                      <td className="p-4 text-center font-medium bg-gray-50">{a.sysQty}</td>
-                      <td className="p-4 text-center font-medium bg-blue-50">{a.actualQty}</td>
-                      <td className="p-4 text-center font-black text-red-600">{a.diff}</td>
-                      <td className="p-4 text-sm text-red-500">{a.note}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-
-          {/* TAB 4: HÀNG HOÀN */}
-          {activeTab === 'returns' && (
-            <>
-              <div className="p-5 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
-                <h2 className="text-lg font-bold text-gray-900">Nghiệp vụ Xử lý Hàng hoàn (Trả/Bom)</h2>
-                <button onClick={() => setShowReturnModal(true)} className="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5" /> Xử lý Kiện hàng mới
-                </button>
-              </div>
-              <table className="w-full text-left">
-                <thead className="bg-gray-50 text-gray-500 text-sm border-b">
-                  <tr><th className="p-4">Mã Xử lý</th><th className="p-4">Từ Đơn hàng</th><th className="p-4">Mã SKU</th><th className="p-4">Lý do Hoàn</th><th className="p-4">Tình trạng QC</th><th className="p-4">Hướng xử lý</th></tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {returns.map((r, i) => (
-                    <tr key={i} className="hover:bg-gray-50">
-                      <td className="p-4 font-bold">{r.id}</td>
-                      <td className="p-4 text-sm text-blue-600 font-medium cursor-pointer hover:underline">{r.orderId}</td>
-                      <td className="p-4 font-medium">{r.sku}</td>
-                      <td className="p-4 text-sm">{r.reason}</td>
-                      <td className="p-4">
-                        <span className={`px-2 py-1 rounded text-xs font-bold ${r.qcStatus === 'Đủ điều kiện' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{r.qcStatus}</span>
-                      </td>
-                      <td className="p-4 font-bold text-gray-700">{r.action}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-        </div>
-      </main>
-
-      {/* ================= MODAL NHẬP XUẤT ================= */}
-      {showTxModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl">
-            <div className="flex justify-between items-center mb-6 border-b pb-4">
-              <h2 className="text-xl font-bold">Lập Phiếu Nhập / Xuất Kho</h2>
-              <button onClick={() => setShowTxModal(false)} className="text-gray-400 hover:bg-gray-100 p-1 rounded-full"><X className="w-6 h-6"/></button>
-            </div>
-            <form onSubmit={handleAddTransaction} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-semibold mb-1">Loại Phiếu</label>
-                  <select value={txForm.type} onChange={e => setTxForm({...txForm, type: e.target.value})} className="w-full border p-2.5 rounded-xl bg-gray-50 outline-none focus:border-orange-500">
-                    <option>Nhập kho</option><option>Xuất kho</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold mb-1">Số lượng</label>
-                  <input required type="number" min="1" value={txForm.qty} onChange={e => setTxForm({...txForm, qty: e.target.value})} className="w-full border p-2.5 rounded-xl bg-gray-50 outline-none focus:border-orange-500"/>
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold mb-1">Mã SKU Sản phẩm</label>
-                <input required type="text" placeholder="VD: SP-001" value={txForm.sku} onChange={e => setTxForm({...txForm, sku: e.target.value})} className="w-full border p-2.5 rounded-xl bg-gray-50 outline-none focus:border-orange-500"/>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold mb-1">Ghi chú / Nguồn gốc</label>
-                <input required type="text" placeholder="Nhà cung cấp / Mã đơn vị vận chuyển..." value={txForm.note} onChange={e => setTxForm({...txForm, note: e.target.value})} className="w-full border p-2.5 rounded-xl bg-gray-50 outline-none focus:border-orange-500"/>
-              </div>
-              <button type="submit" className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 rounded-xl mt-4">Xác nhận Lưu Hệ thống</button>
-            </form>
+      {/* Tabs Navigation */}
+      <nav className="bg-white shadow-sm border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-start h-12">
+            <button
+              className={`inline-flex items-center px-4 py-2 border-b-2 text-sm font-medium ${activeTab === 'inbound' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+              onClick={() => setActiveTab('inbound')}
+            >
+              <Package className="w-4 h-4 mr-2" /> Nhập kho
+            </button>
+            <button
+              className={`inline-flex items-center px-4 py-2 border-b-2 text-sm font-medium ${activeTab === 'outbound' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+              onClick={() => setActiveTab('outbound')}
+            >
+              <Truck className="w-4 h-4 mr-2" /> Xuất kho
+            </button>
+            <button
+              className={`inline-flex items-center px-4 py-2 border-b-2 text-sm font-medium ${activeTab === 'inventory' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+              onClick={() => setActiveTab('inventory')}
+            >
+              <Box className="w-4 h-4 mr-2" /> Hàng hóa & Vị trí
+            </button>
+            <button
+              className={`inline-flex items-center px-4 py-2 border-b-2 text-sm font-medium ${activeTab === 'count' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+              onClick={() => setActiveTab('count')}
+            >
+              <RefreshCw className="w-4 h-4 mr-2" /> Kiểm kê
+            </button>
+            <button
+              className={`inline-flex items-center px-4 py-2 border-b-2 text-sm font-medium ${activeTab === 'returns' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+              onClick={() => setActiveTab('returns')}
+            >
+              <AlertTriangle className="w-4 h-4 mr-2" /> Hàng hoàn
+            </button>
           </div>
         </div>
-      )}
+      </nav>
 
-      {/* ================= MODAL XỬ LÝ HÀNG HOÀN ================= */}
-      {showReturnModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl">
-            <div className="flex justify-between items-center mb-6 border-b pb-4">
-              <h2 className="text-xl font-bold">Xử lý Kiện Hàng Hoàn</h2>
-              <button onClick={() => setShowReturnModal(false)} className="text-gray-400 hover:bg-gray-100 p-1 rounded-full"><X className="w-6 h-6"/></button>
-            </div>
-            <form onSubmit={handleAddReturn} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-semibold mb-1">Mã Đơn hàng</label>
-                  <input required type="text" placeholder="ORD-..." value={returnForm.orderId} onChange={e => setReturnForm({...returnForm, orderId: e.target.value})} className="w-full border p-2.5 rounded-xl bg-gray-50 outline-none focus:border-orange-500"/>
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold mb-1">Mã SKU</label>
-                  <input required type="text" placeholder="SP-..." value={returnForm.sku} onChange={e => setReturnForm({...returnForm, sku: e.target.value})} className="w-full border p-2.5 rounded-xl bg-gray-50 outline-none focus:border-orange-500"/>
-                </div>
-              </div>
+      {/* Tab Content */}
+      <div className="flex-1 p-6 overflow-y-auto">
+        {activeTab === 'inbound' && (
+          <div className="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-md">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+              <Package className="w-6 h-6 text-orange-500" /> Lập phiếu nhập kho
+            </h2>
+
+            {/* Form Lập phiếu nhập kho */}
+            <form onSubmit={handleCreateInboundSlip} className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8 p-4 border border-gray-200 rounded-lg bg-gray-50">
               <div>
-                <label className="block text-sm font-semibold mb-1">Lý do Khách Hoàn/Bom</label>
-                <input required type="text" placeholder="Không vừa size, giao trễ..." value={returnForm.reason} onChange={e => setReturnForm({...returnForm, reason: e.target.value})} className="w-full border p-2.5 rounded-xl bg-gray-50 outline-none focus:border-orange-500"/>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold mb-1">Kết quả Kiểm tra chất lượng (QC)</label>
-                <select value={returnForm.qcStatus} onChange={e => setReturnForm({...returnForm, qcStatus: e.target.value})} className="w-full border p-2.5 rounded-xl bg-gray-50 outline-none focus:border-orange-500">
-                  <option value="Đủ điều kiện">Hàng còn nguyên vẹn (Đủ điều kiện nhập lại kệ)</option>
-                  <option value="Hư hỏng">Hàng dơ, rách box (Chuyển sang kho lỗi)</option>
+                <label htmlFor="product" className="block text-sm font-medium text-gray-700 mb-1">Sản phẩm</label>
+                <select
+                  id="product"
+                  className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm rounded-md"
+                  value={selectedProductId}
+                  onChange={(e) => setSelectedProductId(e.target.value)} // Sử dụng state chính xác
+                  required
+                >
+                  <option value="">-- Chọn sản phẩm --</option>
+                  {products.map(product => (
+                    <option key={product.id} value={product.id}>{product.name} (Tồn: {product.stock})</option>
+                  ))}
                 </select>
               </div>
-              <button type="submit" className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 rounded-xl mt-4">Cập nhật Trạng thái</button>
+              <div>
+                <label htmlFor="quantity" className="block text-sm font-medium text-gray-700 mb-1">Số lượng nhập</label>
+                <input
+                  type="number"
+                  id="quantity"
+                  className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500"
+                  value={inboundQuantity}
+                  onChange={(e) => setInboundQuantity(e.target.value)}
+                  min="1"
+                  required
+                />
+              </div>
+              <div className="flex items-end">
+                <button
+                  type="submit"
+                  className="w-full inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-orange-600 hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500"
+                >
+                  <PlusCircle className="w-5 h-5 mr-2" /> Xác nhận nhập
+                </button>
+              </div>
             </form>
-          </div>
-        </div>
-      )}
 
+            <h2 className="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <History className="w-6 h-6 text-orange-500" /> Lịch sử Nhập kho
+            </h2>
+
+            {/* Bảng Lịch sử Nhập kho */}
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mã phiếu</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tên sản phẩm</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Số lượng nhập</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ngày giờ nhập</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {Array.isArray(inboundHistory) && inboundHistory.length > 0 ? (
+                    inboundHistory.map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">WHIN-{item.id.toString().padStart(4, '0')}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.product_name || 'Sản phẩm không tồn tại'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.quantity}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(item.created_at).toLocaleString()}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr><td colSpan="4" className="text-center py-4 text-gray-500">Không có lịch sử nhập kho</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'outbound' && (
+          <div className="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-md">
+            <h2 className="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <Truck className="w-6 h-6 text-orange-500" /> Đơn hàng chờ xuất kho
+            </h2>
+
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mã Đơn Hàng</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tên Khách Hàng</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tổng Tiền</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ngày Tạo</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hành Động</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {Array.isArray(pendingOrders) && pendingOrders.length > 0 ? (
+                    pendingOrders.map((order) => (
+                      <tr key={order.id}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{formatOrderId(order.id)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{order.customer_name}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{order.total_amount.toLocaleString()}đ</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(order.created_at).toLocaleString()}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          <button
+                            onClick={() => handleConfirmOutbound(order.id)}
+                            className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-orange-600 hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500"
+                          >
+                            Xác nhận xuất kho
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="5" className="text-center py-4 text-gray-500">Không có đơn hàng chờ xuất kho.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'inventory' && (
+          <div className="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-md">
+            <h2 className="text-2xl font-bold text-gray-800 mb-4">Hàng hóa & Vị trí</h2>
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead>
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tên sản phẩm</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tồn kho</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Vị trí (Bin)</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {Array.isArray(products) && products.map((item) => (
+                  <tr key={item.id}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.stock}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <input 
+                        type="text" 
+                        defaultValue={item.bin || ''} 
+                        className="border rounded px-2 py-1 w-24 text-sm"
+                        placeholder="Chưa gán"
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === 'count' && (
+          <div className="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-md">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+              <RefreshCw className="w-6 h-6 text-orange-500" /> Thực hiện Kiểm kê Kho
+            </h2>
+
+            <form onSubmit={handlePerformInventoryCount} className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 p-4 border border-gray-200 rounded-lg bg-gray-50">
+              <div>
+                <label htmlFor="productToCount" className="block text-sm font-medium text-gray-700 mb-1">Sản phẩm kiểm kê</label>
+                <select
+                  id="productToCount"
+                  className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm rounded-md"
+                  value={selectedProductIdCount}
+                  onChange={(e) => setSelectedProductIdCount(e.target.value)}
+                  required
+                >
+                  <option value="">-- Chọn sản phẩm --</option>
+                  {Array.isArray(products) && products.map(product => (
+                    <option key={product.id} value={product.id}>
+                      {product.name} (Tồn hệ thống: {product.stock})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="actualQuantity" className="block text-sm font-medium text-gray-700 mb-1">Số lượng thực tế</label>
+                <input
+                  type="number"
+                  id="actualQuantity"
+                  className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500"
+                  value={actualQty}
+                  onChange={(e) => setActualQty(e.target.value)}
+                  min="0"
+                  required
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label htmlFor="countReason" className="block text-sm font-medium text-gray-700 mb-1">Lý do chênh lệch (nếu có)</label>
+                <textarea
+                  id="countReason"
+                  rows="2"
+                  className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500"
+                  value={countReason}
+                  onChange={(e) => setCountReason(e.target.value)}
+                  placeholder="Ví dụ: Hàng hỏng, mất mát, nhập sai..."
+                ></textarea>
+              </div>
+              <div className="md:col-span-2 flex justify-end">
+                <button
+                  type="submit"
+                  className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-orange-600 hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500"
+                >
+                  <RefreshCw className="w-5 h-5 mr-2" /> Xác nhận kiểm kê
+                </button>
+              </div>
+            </form>
+
+            <h3 className="text-xl font-bold text-gray-800 mb-4 mt-8 flex items-center gap-2">
+              <History className="w-5 h-5 text-orange-500" /> Lịch sử Kiểm kê
+            </h3>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mã Phiếu</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tên Sản Phẩm</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Số Hệ Thống</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Số Thực Tế</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Chênh Lệch</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lý Do</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trạng Thái</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ngày Kiểm Kê</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {Array.isArray(countHistory) && countHistory.length > 0 ? (
+                    countHistory.map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">WHIC-{item.id.toString().padStart(4, '0')}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.product_name || 'Sản phẩm không tồn tại'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.system_qty}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.actual_qty}</td>
+                        <td className={`px-6 py-4 whitespace-nowrap text-sm font-bold ${item.difference < 0 ? 'text-red-600' : (item.difference > 0 ? 'text-green-600' : 'text-gray-500')}`}>
+                          {item.difference}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.reason || 'Không có'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.status}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(item.created_at).toLocaleString()}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="8" className="text-center py-4 text-gray-500">Chưa có lịch sử kiểm kê nào.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'returns' && (
+          <div className="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-md">
+            <h2 className="text-2xl font-bold text-gray-800 mb-4">Hàng hoàn</h2>
+            {/* Bảng Lịch sử Hàng hoàn */}
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mã phiếu</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tên sản phẩm</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Số lượng</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lý do</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ngày hoàn</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hành động</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {Array.isArray(returnsHistory) && returnsHistory.length > 0 ? (
+                    returnsHistory.map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">WHRT-{item.id.toString().padStart(4, '0')}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.product_name || 'Sản phẩm không tồn tại'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.quantity}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.reason || 'Không rõ'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(item.created_at).toLocaleString()}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          {item.reason !== 'good' && ( // Chỉ hiển thị nút nếu lý do không phải là 'good'
+                            <button
+                              onClick={() => handleProcessReturn(item)}
+                              className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                            >
+                              Nhập lại kho
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr><td colSpan="5" className="text-center py-4 text-gray-500">Không có lịch sử hàng hoàn</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
