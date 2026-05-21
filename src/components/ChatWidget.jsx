@@ -20,14 +20,14 @@ const ChatWidget = ({ currentUser }) => {
       const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
       const headers = { 'Content-Type': 'application/json' };
       if (token) headers.Authorization = `Bearer ${token}`;
-      const response = await fetch('/api/chat/message', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ text: trimmed }),
+        body: JSON.stringify({ message: trimmed }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Gửi tin nhắn thất bại.');
-      setMessages((prev) => [...prev, { from: 'bot', text: data.bot_reply || data.message }]);
+      setMessages((prev) => [...prev, { from: 'bot', text: data.reply }]);
     } catch (err) {
       setMessages((prev) => [...prev, { from: 'bot', text: `Lỗi: ${err.message}` }]);
     } finally {

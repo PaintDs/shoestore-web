@@ -512,18 +512,20 @@ def update_order_info(order_id: int, order_update: OrderInfoUpdate, conn: sqlite
 
 @router.put("/sales/orders/{order_id}/status")
 def update_order_status(order_id: int, status_update: OrderStatusUpdate, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_current_user)):
+    conn.row_factory = sqlite3.Row # Đảm bảo dữ liệu trả về dạng Dict-like
     cursor = conn.cursor()
     cursor.execute("SELECT status, customer_id, total_amount FROM orders WHERE id = ?", (order_id,))
     order = cursor.fetchone()
     if not order:
         raise HTTPException(status_code=404, detail="Không tìm thấy đơn hàng.")
 
-    # Nếu người dùng là khách hàng (customer), họ CHỈ được phép chuyển trạng thái đơn sang 'completed' (Đã nhận hàng) 
+    # Nếu người dùng là khách hàng (customer), họ CHỈ được phép chuyển trạng thái đơn sang 'completed' (Đã nhận hàng)
     # và đơn hàng đó phải thuộc về chính họ (khớp customer_id)
     if user['role'] == 'customer':
         if status_update.status != 'completed':
             raise HTTPException(status_code=403, detail="Khách hàng chỉ có quyền xác nhận 'Đã nhận được hàng'.")
-        if order['customer_id'] != user['id']:
+        # Anti-IDOR: Kiểm tra nghiêm ngặt quyền sở hữu đơn hàng
+        if order['customer_id'] is None or int(order['customer_id']) != user['id']:
             raise HTTPException(status_code=403, detail="Bạn không có quyền thao tác trên đơn hàng của người khác.")
     # Nếu không phải customer (tức là admin/sale) thì cho phép đi tiếp luồng xử lý trạng thái bình thường của họ
 
@@ -553,9 +555,13 @@ def update_order_status(order_id: int, status_update: OrderStatusUpdate, conn: s
         cursor.execute("UPDATE customers SET loyalty_points = loyalty_points + ? WHERE id = ?", (points_to_add, order['customer_id']))
         
         cursor.execute("SELECT loyalty_points FROM customers WHERE id = ?", (order['customer_id'],))
-        new_points = cursor.fetchone()['loyalty_points']
-        if new_points >= 1000:
-            cursor.execute("UPDATE customers SET rank = 'VIP' WHERE id = ?", (order['customer_id'],))
+        customer_row = cursor.fetchone()
+        
+        # Chốt chặn an toàn: Chỉ xử lý lên hạng VIP nếu tìm thấy bản ghi khách hàng trong DB
+        if customer_row is not None:
+            new_points = customer_row['loyalty_points']
+            if new_points >= 1000:
+                cursor.execute("UPDATE customers SET rank = 'VIP' WHERE id = ?", (order['customer_id'],))
 
     conn.commit()
     return {"message": f"Cập nhật trạng thái đơn hàng {order_id} thành công."}
@@ -581,10 +587,10 @@ def create_mock_online_order(conn: sqlite3.Connection = Depends(get_db), user: d
             "quantity": quantity
         })
 
-    customer_name = f"Khách Online Demo #{random.randint(100, 999)}"
+    # Gán đơn hàng demo chuẩn chỉ cho chính tài khoản đang đăng nhập
     cursor.execute(
-        "INSERT INTO orders (customer_name, order_type, total_amount, status) VALUES (?, ?, ?, ?)",
-        (customer_name, 'online', total_amount, 'pending')
+        "INSERT INTO orders (customer_id, customer_name, order_type, total_amount, status) VALUES (?, ?, ?, ?, ?)",
+        (user['id'], user['name'], 'online', total_amount, 'pending')
     )
     order_id = cursor.lastrowid
 
