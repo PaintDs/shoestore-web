@@ -511,12 +511,21 @@ def update_order_info(order_id: int, order_update: OrderInfoUpdate, conn: sqlite
     return {"message": f"Cập nhật thông tin đơn hàng {order_id} thành công."}
 
 @router.put("/sales/orders/{order_id}/status")
-def update_order_status(order_id: int, status_update: OrderStatusUpdate, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_sale_user)):
+def update_order_status(order_id: int, status_update: OrderStatusUpdate, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_current_user)):
     cursor = conn.cursor()
     cursor.execute("SELECT status, customer_id, total_amount FROM orders WHERE id = ?", (order_id,))
     order = cursor.fetchone()
     if not order:
         raise HTTPException(status_code=404, detail="Không tìm thấy đơn hàng.")
+
+    # Nếu người dùng là khách hàng (customer), họ CHỈ được phép chuyển trạng thái đơn sang 'completed' (Đã nhận hàng) 
+    # và đơn hàng đó phải thuộc về chính họ (khớp customer_id)
+    if user['role'] == 'customer':
+        if status_update.status != 'completed':
+            raise HTTPException(status_code=403, detail="Khách hàng chỉ có quyền xác nhận 'Đã nhận được hàng'.")
+        if order['customer_id'] != user['id']:
+            raise HTTPException(status_code=403, detail="Bạn không có quyền thao tác trên đơn hàng của người khác.")
+    # Nếu không phải customer (tức là admin/sale) thì cho phép đi tiếp luồng xử lý trạng thái bình thường của họ
 
     valid_transitions = {
         'pending': ['confirmed', 'cancelled'],

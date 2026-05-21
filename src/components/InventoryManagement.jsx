@@ -131,9 +131,13 @@ const InventoryManagement = ({ onBack }) => {
         return;
       }
 
-      const response = await fetch(`/api/warehouse/outbound/order/${orderId}`, {
+      const response = await fetch(`/api/sales/orders/${orderId}/status`, {
         method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ status: 'shipping' })
       });
 
       const data = await response.json();

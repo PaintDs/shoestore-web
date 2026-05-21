@@ -75,6 +75,24 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
     }
   };
 
+  const handleConfirmReceived = async (orderId) => {
+    if (!window.confirm('Xác nhận bạn đã nhận được hàng cho đơn hàng này?')) return;
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      const response = await fetch(`/api/sales/orders/${orderId}/status`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'completed' }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Xác nhận nhận hàng thất bại.');
+      alert(data.message);
+      fetchUserOrders();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   const handleOpenFeedbackModal = (product) => {
     setCurrentProductToReview(product);
     setFeedbackForm({ rating: 5, comment: '' });
@@ -89,6 +107,7 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
       const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
       const payload = {
         product_id: currentProductToReview.product_id,
+        customer_name: currentUser?.name || 'Khách hàng thấu đáo',
         rating: parseInt(feedbackForm.rating, 10),
         comment: feedbackForm.comment
       };
@@ -218,6 +237,15 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
                               className="text-sm text-red-600 font-bold hover:underline"
                             >
                               Hủy đơn hàng
+                            </button>
+                          )}
+                          {order.status === 'shipping' && (
+                            <button
+                              type="button"
+                              onClick={() => handleConfirmReceived(order.id)}
+                              className="text-sm text-green-600 bg-green-100 px-3 py-1.5 rounded-lg font-bold hover:bg-green-200"
+                            >
+                              Đã nhận được hàng
                             </button>
                           )}
                         </div>
