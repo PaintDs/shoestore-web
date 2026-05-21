@@ -56,6 +56,10 @@ const AccountingManagement = ({ onBack }) => {
   // Form thêm Hóa đơn
   const [invForm, setInvForm] = useState({ order_id: '', customer_name: '', company_name: '', tax_id: '', address: '', total_amount: '' });
 
+  // State cho bộ lọc báo cáo
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+
   // State lọc phương thức giao dịch (ACC_CASH_04)
   const [filterMethod, setFilterMethod] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -68,14 +72,15 @@ const AccountingManagement = ({ onBack }) => {
     } else if (activeTab === 'cashbook') {
       fetchCashLedger(); // Gọi hàm fetch riêng cho cash ledger
     } else if (activeTab === 'reports') {
-      // Tự động lấy dữ liệu báo cáo cho kỳ hiện tại khi chuyển tab
-      const current = new Date();
-      const month = current.getMonth() + 1;
-      const year = current.getFullYear();
-      // ACC_FIN_01: Gọi API lấy báo cáo
-      fetchApi(`/api/accounting/reports?year=${year}&month=${month}`).then(data => data && setReportData(data));
+      // Build query params for reports
+      const params = new URLSearchParams();
+      if (startTime) params.append('start_time', startTime);
+      if (endTime) params.append('end_time', endTime);
+      const queryString = params.toString();
+      
+      fetchApi(`/api/accounting/reports?${queryString}`).then(data => data && setReportData(data));
     }
-  }, [activeTab, token, fetchApi]);
+  }, [activeTab, token, fetchApi, startTime, endTime]);
 
   const handleSearch = () => {
     if (activeTab !== 'invoices') return;
@@ -160,6 +165,42 @@ const AccountingManagement = ({ onBack }) => {
       fetchApi('/api/accounting/invoices').then(data => data && setInvoices(data)); // Refresh list
     } else {
       setModalError(error || 'Lỗi không xác định.');
+    }
+  };
+
+  const handleCancelInvoice = async (invoiceId) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn hủy hóa đơn HD-${String(invoiceId).padStart(5, '0')}?`)) return;
+    const result = await fetchApi(`/api/accounting/invoices/${invoiceId}/cancel`, { method: 'PUT' });
+    if (result) {
+      alert(result.message);
+      fetchApi('/api/accounting/invoices').then(data => data && setInvoices(data)); // Refresh list
+    }
+  };
+
+  const handleDownloadInvoice = async (invoice) => {
+    try {
+      if (!token) throw new Error("Chưa đăng nhập.");
+      setLoading(true);
+      const response = await fetch(`/api/accounting/invoices/${invoice.id}/download`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.detail || 'Không thể tải hóa đơn.');
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Hoa_Don_${invoice.id}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -254,8 +295,8 @@ const AccountingManagement = ({ onBack }) => {
                       </span>
                     </td>
                     <td className="p-4 text-center">
-                      <button className="text-red-500 hover:text-red-700 font-bold text-sm bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors">Hủy</button>
-                      <button className="ml-2 text-blue-500 hover:text-blue-700 font-bold text-sm bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors">Tải PDF</button>
+                      <button onClick={() => handleCancelInvoice(inv.id)} className="text-red-500 hover:text-red-700 font-bold text-sm bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={inv.status !== 'issued'}>Hủy</button>
+                      <button onClick={() => handleDownloadInvoice(inv)} className="ml-2 text-blue-500 hover:text-blue-700 font-bold text-sm bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors">Tải Hóa Đơn</button>
                     </td>
                   </tr>
                 ))}
@@ -342,27 +383,29 @@ const AccountingManagement = ({ onBack }) => {
             <div className="flex justify-between items-center mb-8 border-b pb-6">
               <div>
                 <h2 className="text-2xl font-black text-gray-900 uppercase">Báo cáo Tài chính</h2>
-                <p className="text-gray-500 mt-2">Kỳ báo cáo: Tháng {new Date().getMonth() + 1}/{new Date().getFullYear()}</p>
+                <div className="flex items-center gap-2 mt-4 flex-wrap">
+                    <label className="text-sm font-semibold text-gray-600">Từ:</label>
+                    <input type="datetime-local" value={startTime} onChange={e => setStartTime(e.target.value)} className="border p-2 rounded-lg text-sm focus:ring-green-500 focus:border-green-500"/>
+                    <label className="text-sm font-semibold text-gray-600">Đến:</label>
+                    <input type="datetime-local" value={endTime} onChange={e => setEndTime(e.target.value)} className="border p-2 rounded-lg text-sm focus:ring-green-500 focus:border-green-500"/>
+                </div>
               </div>
-              <div className="text-right"><p className="text-sm font-bold text-gray-500">Trạng thái kỳ</p><span className="text-lg font-bold text-green-600">Đang mở</span></div>
             </div>
             {/* Các số liệu báo cáo */}
             <div className="space-y-4">
               <div className="flex justify-between items-center py-3 border-b border-gray-100">
-                <span className="font-bold text-gray-700 text-lg">1. Tổng doanh thu bán hàng</span>
-                <span className="font-black text-gray-900 text-lg">{(reportData?.total_revenue || 0).toLocaleString()}đ</span>
+                <span className="font-bold text-gray-700 text-lg">1. Tổng thu</span>
+                <span className="font-black text-green-700 text-lg">{(reportData?.total_income || 0).toLocaleString()}đ</span>
               </div>
               <div className="flex justify-between items-center py-3 border-b-2 border-gray-800 bg-gray-50 px-4 rounded-lg">
-                <span className="font-bold text-blue-800 text-lg">2. Doanh thu thuần</span>
-                <span className="font-black text-blue-800 text-lg">{(reportData?.total_revenue || 0).toLocaleString()}đ</span>
-              </div>
-              <div className="flex justify-between items-center py-3 border-b border-gray-100">
-                <span className="font-bold text-gray-700 text-lg">3. Giá vốn hàng bán</span>
-                <span className="font-bold text-red-600 text-lg">({(reportData?.cogs || 0).toLocaleString()}đ)</span>
+                <span className="font-bold text-red-800 text-lg">2. Tổng chi</span>
+                <span className="font-black text-red-800 text-lg">- {(reportData?.total_expense || 0).toLocaleString()}đ</span>
               </div>
               <div className="flex justify-between items-center py-5 border-t-4 border-double border-gray-900 mt-4 px-4 bg-gray-900 text-white rounded-xl shadow-lg">
-                <span className="font-black text-xl">LỢI NHUẬN THUẦN TỪ HOẠT ĐỘNG KD</span>
-                <span className="font-black text-2xl text-green-400">{(reportData?.net_profit || 0).toLocaleString()}đ</span>
+                <span className="font-black text-xl">LỢI NHUẬN THUẦN</span>
+                <span className={`font-black text-2xl ${reportData?.net_profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {(reportData?.net_profit || 0).toLocaleString()}đ
+                </span>
               </div>
             </div>
             <div className="mt-8 flex justify-end gap-4">

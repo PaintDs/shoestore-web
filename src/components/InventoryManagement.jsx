@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ArrowLeft, PlusCircle, Package, History, Box, Truck, RefreshCw, AlertTriangle } from 'lucide-react'; // useWebSocket
+import { ArrowLeft, PlusCircle, Package, History, Box, Truck, RefreshCw, AlertTriangle, Download } from 'lucide-react'; // useWebSocket
 const InventoryManagement = ({ onBack }) => {
   const [activeTab, setActiveTab] = useState('inbound'); // 'inbound', 'outbound', 'inventory', 'count', 'returns'
   const [inboundHistory, setInboundHistory] = useState([]);
@@ -278,6 +278,27 @@ const InventoryManagement = ({ onBack }) => {
     }
   };
 
+  const handleExportInventory = async () => {
+    try {
+      const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+      const response = await fetch('/api/warehouse/report', {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error('Không thể xuất file báo cáo kho.');
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'Bao_Cao_Ton_Kho.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (error) {
+      alert(`Lỗi xuất file: ${error.message}`);
+    }
+  };
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col">
       {/* Header */}
@@ -459,7 +480,16 @@ const InventoryManagement = ({ onBack }) => {
 
         {activeTab === 'inventory' && (
           <div className="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">Hàng hóa & Vị trí</h2>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold text-gray-800">Hàng hóa & Vị trí</h2>
+              <button
+                onClick={handleExportInventory}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg flex items-center gap-2 transition-colors"
+              >
+                <Download className="w-4 h-4" />
+                Xuất Báo Cáo Kho (CSV)
+              </button>
+            </div>
             <table className="min-w-full divide-y divide-gray-200">
               <thead>
                 <tr>

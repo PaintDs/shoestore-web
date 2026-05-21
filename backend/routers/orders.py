@@ -62,6 +62,15 @@ class ApplyVoucherRequest(BaseModel):
         from_attributes=True
     )
 
+class CustomerUpdate(BaseModel):
+    rank: str
+    loyalty_points: int
+
+class OrderInfoUpdate(BaseModel):
+    customer_name: str
+    # phone: Optional[str] = None # Cần nâng cấp DB để thêm cột này
+    # address: Optional[str] = None # Cần nâng cấp DB để thêm cột này
+
 class CustomerCreate(BaseModel):
     name: str; phone: str
 
@@ -332,7 +341,9 @@ def process_checkout(req: CheckoutRequest, conn: sqlite3.Connection = Depends(ge
         raise HTTPException(status_code=400, detail="Phương thức thanh toán không hợp lệ.")
 
 @router.get("/orders")
-def get_orders(conn: sqlite3.Connection = Depends(get_db), status: Optional[str] = None):
+def get_orders(conn: sqlite3.Connection = Depends(get_db), status: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] not in ['admin', 'sale', 'ketoan']:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập danh sách đơn hàng toàn hệ thống.")
     cursor = conn.cursor()
     query = "SELECT * FROM orders"
     params = []
@@ -427,6 +438,19 @@ def get_customers(conn: sqlite3.Connection = Depends(get_db), user: dict = Depen
     cursor.execute("SELECT * FROM customers ORDER BY id DESC")
     return [dict(row) for row in cursor.fetchall()]
 
+@router.put("/sales/customers/{customer_id}")
+def update_customer(customer_id: int, customer: CustomerUpdate, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_sale_user)):
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE customers SET rank = ?, loyalty_points = ? WHERE id = ?",
+        (customer.rank, customer.loyalty_points, customer_id)
+    )
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Khách hàng không tồn tại.")
+    
+    conn.commit()
+    return {"message": "Cập nhật thông tin khách hàng thành công!"}
+
 @router.post("/sales/orders")
 def create_sale_order(order: SaleOrderCreate, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_sale_user)):
     cursor = conn.cursor()
@@ -468,6 +492,23 @@ def create_sale_order(order: SaleOrderCreate, conn: sqlite3.Connection = Depends
 
     conn.commit()
     return {"message": "SALE_ORDER_01/02: Tạo đơn hàng thành công!", "order_id": order_id}
+
+@router.put("/sales/orders/{order_id}/update")
+def update_order_info(order_id: int, order_update: OrderInfoUpdate, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_sale_user)):
+    cursor = conn.cursor()
+    cursor.execute("SELECT status FROM orders WHERE id = ?", (order_id,))
+    order = cursor.fetchone()
+    if not order:
+        raise HTTPException(status_code=404, detail="Không tìm thấy đơn hàng.")
+    if order['status'] != 'pending':
+        raise HTTPException(status_code=400, detail="Chỉ có thể sửa thông tin đơn hàng ở trạng thái 'pending'.")
+
+    cursor.execute(
+        "UPDATE orders SET customer_name = ? WHERE id = ?",
+        (order_update.customer_name, order_id)
+    )
+    conn.commit()
+    return {"message": f"Cập nhật thông tin đơn hàng {order_id} thành công."}
 
 @router.put("/sales/orders/{order_id}/status")
 def update_order_status(order_id: int, status_update: OrderStatusUpdate, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_sale_user)):

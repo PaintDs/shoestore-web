@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ArrowLeft, Users, ShoppingCart, ListOrdered, Plus, UserPlus, Search, CheckCircle, XCircle, X, Trash2 } from 'lucide-react';
+import { ArrowLeft, Users, ShoppingCart, ListOrdered, Plus, UserPlus, Search, CheckCircle, XCircle, X, Trash2, Edit } from 'lucide-react';
 
 const SalesManagement = ({ onBack }) => {
   const [activeTab, setActiveTab] = useState('pos');
@@ -19,6 +19,14 @@ const SalesManagement = ({ onBack }) => {
   // Modal states
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [newCustomerForm, setNewCustomerForm] = useState({ name: '', phone: '' });
+
+  // Modal states for editing
+  const [showCustomerEditModal, setShowCustomerEditModal] = useState(false);
+  const [currentCustomer, setCurrentCustomer] = useState(null);
+  const [customerEditForm, setCustomerEditForm] = useState({ rank: 'Normal', loyalty_points: 0 });
+  const [showOrderEditModal, setShowOrderEditModal] = useState(false);
+  const [currentOrder, setCurrentOrder] = useState(null);
+  const [orderEditForm, setOrderEditForm] = useState({ customer_name: '' });
 
   const fetchApi = useCallback(async (url, options = {}) => {
     if (!token) return;
@@ -68,6 +76,25 @@ const SalesManagement = ({ onBack }) => {
     }
   };
 
+  const handleUpdateCustomer = async (e) => {
+    e.preventDefault();
+    if (!currentCustomer) return;
+    const payload = {
+      ...customerEditForm,
+      loyalty_points: parseInt(customerEditForm.loyalty_points, 10)
+    };
+    if (isNaN(payload.loyalty_points)) {
+      alert("Điểm tích lũy phải là một con số.");
+      return;
+    }
+    const result = await fetchApi(`/api/sales/customers/${currentCustomer.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    if (result) {
+      alert(result.message);
+      setShowCustomerEditModal(false);
+      fetchApi('/api/sales/customers').then(data => data && setCustomers(data));
+    }
+  };
+
   const handleAddToPosCart = (product) => {
     setPosCart(prev => {
       const existing = prev.find(item => item.id === product.id);
@@ -98,6 +125,17 @@ const SalesManagement = ({ onBack }) => {
       setSelectedCustomer(null);
       // Refresh product stock
       fetchApi('/api/products').then(data => data && setProducts(data.filter(p => p.stock > 0)));
+    }
+  };
+
+  const handleUpdateOrder = async (e) => {
+    e.preventDefault();
+    if (!currentOrder) return;
+    const result = await fetchApi(`/api/sales/orders/${currentOrder.id}/update`, { method: 'PUT', body: JSON.stringify(orderEditForm) });
+    if (result) {
+      alert(result.message);
+      setShowOrderEditModal(false);
+      fetchApi('/api/orders?status=pending').then(data => data && setOnlineOrders(data));
     }
   };
 
@@ -136,15 +174,40 @@ const SalesManagement = ({ onBack }) => {
 
         {activeTab === 'customers' && (
           <div className="bg-white p-6 rounded-xl shadow-sm">
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold">Danh sách Khách hàng</h2>
               <button onClick={() => setShowCustomerModal(true)} className="bg-cyan-600 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2"><UserPlus /> Thêm thành viên</button>
             </div>
+            
             <table className="w-full text-left">
-              <thead><tr className="bg-gray-50"><th>ID</th><th>Tên</th><th>SĐT</th><th>Hạng</th><th>Điểm</th></tr></thead>
+              <thead>
+                <tr className="bg-gray-50">
+                  <th>ID</th>
+                  <th>Tên</th>
+                  <th>SĐT</th>
+                  <th>Hạng</th>
+                  <th>Điểm</th>
+                  <th>Hành động</th>
+                </tr>
+              </thead>
               <tbody>
                 {customers.map(c => (
-                  <tr key={c.id}><td>{c.id}</td><td>{c.name}</td><td>{c.phone}</td><td><span className={c.rank === 'VIP' ? 'text-yellow-500 font-bold' : ''}>{c.rank}</span></td><td>{c.loyalty_points}</td></tr>
+                  <tr key={c.id} className="border-b">
+                    <td>{c.id}</td>
+                    <td>{c.name}</td>
+                    <td>{c.phone}</td>
+                    <td>
+                      <span className={c.rank === 'VIP' ? 'text-yellow-500 font-bold' : ''}>
+                        {c.rank}
+                      </span>
+                    </td>
+                    <td>{c.loyalty_points}</td>
+                    <td>
+                      <button onClick={() => { setCurrentCustomer(c); setCustomerEditForm({ rank: c.rank, loyalty_points: c.loyalty_points }); setShowCustomerEditModal(true); }} className="text-blue-600 font-bold flex items-center gap-1">
+                        <Edit size={16}/> Sửa
+                      </button>
+                    </td>
+                  </tr>
                 ))}
               </tbody>
             </table>
@@ -209,6 +272,7 @@ const SalesManagement = ({ onBack }) => {
                     <td>{o.id}</td><td>{o.customer_name}</td><td>{o.total_amount.toLocaleString()}đ</td><td>{new Date(o.created_at).toLocaleString()}</td>
                     <td className="flex gap-2">
                       <button onClick={() => handleUpdateOrderStatus(o.id, 'confirmed')} className="text-green-600 font-bold flex items-center gap-1"><CheckCircle size={16}/> Xác nhận</button>
+                      <button onClick={() => { setCurrentOrder(o); setOrderEditForm({ customer_name: o.customer_name }); setShowOrderEditModal(true); }} className="text-blue-600 font-bold flex items-center gap-1"><Edit size={16}/> Sửa đơn</button>
                       <button onClick={() => handleUpdateOrderStatus(o.id, 'cancelled')} className="text-red-600 font-bold flex items-center gap-1"><XCircle size={16}/> Hủy đơn</button>
                     </td>
                   </tr>
@@ -238,6 +302,48 @@ const SalesManagement = ({ onBack }) => {
                 <input required value={newCustomerForm.phone} onChange={e => setNewCustomerForm({...newCustomerForm, phone: e.target.value})} className="w-full border p-2 rounded-lg" />
               </div>
               <button type="submit" className="w-full bg-cyan-600 text-white font-bold py-3 rounded-lg">Lưu khách hàng</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showCustomerEditModal && currentCustomer && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold">Sửa thông tin: {currentCustomer.name}</h2>
+              <button onClick={() => setShowCustomerEditModal(false)}><X /></button>
+            </div>
+            <form onSubmit={handleUpdateCustomer} className="space-y-4">
+              {error && <p className="text-red-500">{error}</p>}
+              <div>
+                <label>Hạng thành viên</label>
+                <select value={customerEditForm.rank} onChange={e => setCustomerEditForm({...customerEditForm, rank: e.target.value})} className="w-full border p-2 rounded-lg">
+                  <option value="Normal">Normal</option>
+                  <option value="VIP">VIP</option>
+                </select>
+              </div>
+              <div>
+                <label>Điểm tích lũy</label>
+                <input type="number" value={customerEditForm.loyalty_points} onChange={e => setCustomerEditForm({...customerEditForm, loyalty_points: e.target.value})} className="w-full border p-2 rounded-lg" />
+              </div>
+              <button type="submit" className="w-full bg-cyan-600 text-white font-bold py-3 rounded-lg">Lưu thay đổi</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showOrderEditModal && currentOrder && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold">Sửa đơn hàng: {currentOrder.id}</h2>
+              <button onClick={() => setShowOrderEditModal(false)}><X /></button>
+            </div>
+            <form onSubmit={handleUpdateOrder} className="space-y-4">
+              <div><label>Tên khách hàng</label><input value={orderEditForm.customer_name} onChange={e => setOrderEditForm({...orderEditForm, customer_name: e.target.value})} className="w-full border p-2 rounded-lg" /></div>
+              <p className="text-xs text-gray-400">Lưu ý: Chỉnh sửa SĐT và Địa chỉ cần nâng cấp cơ sở dữ liệu.</p>
+              <button type="submit" className="w-full bg-cyan-600 text-white font-bold py-3 rounded-lg">Lưu thay đổi</button>
             </form>
           </div>
         </div>

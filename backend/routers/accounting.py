@@ -4,7 +4,7 @@ import sqlite3
 from typing import Optional, List
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from pydantic.alias_generators import to_camel
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import calendar
 import csv
 import io
@@ -99,14 +99,55 @@ def search_invoices(search_term: Optional[str] = None, conn: sqlite3.Connection 
     cursor.execute(query, params)
     return [dict(row) for row in cursor.fetchall()]
 
-@router.put("/accounting/invoices/{invoice_id}/adjust")
-def adjust_invoice(invoice_id: int, req: InvoiceAdjust, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_accounting_user)):
+@router.put("/accounting/invoices/{invoice_id}/cancel")
+def cancel_invoice(invoice_id: int, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_accounting_user)):
     cursor = conn.cursor()
-    cursor.execute("UPDATE invoices SET status = 'cancelled', adjustment_reason = ? WHERE id = ?", (req.reason, invoice_id))
+    cursor.execute("UPDATE invoices SET status = 'cancelled' WHERE id = ? AND status = 'issued'", (invoice_id,))
     if cursor.rowcount == 0:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KhÃ´ng tÃ¬m tháº¥y hÃ³a Ä‘Æ¡n Ä‘á»ƒ Ä‘iá»u chá»‰nh.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy hóa đơn hoặc hóa đơn đã được hủy trước đó.")
     conn.commit()
-    return {"message": "ACC_INV_05: HÃ³a Ä‘Æ¡n Ä‘Ã£ Ä‘Æ°á»£c Ä‘iá»u chá»‰nh/há»§y thÃ nh cÃ´ng."}
+    return {"message": "Hủy hóa đơn thành công."}
+
+@router.get("/accounting/invoices/{invoice_id}/download")
+def download_invoice(invoice_id: int, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_accounting_user)):
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,))
+    invoice = cursor.fetchone()
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy hóa đơn.")
+    
+    invoice = dict(invoice)
+
+    # Format the invoice into a text receipt
+    receipt = io.StringIO()
+    receipt.write("========================================\n")
+    receipt.write("         HÓA ĐƠN BÁN HÀNG (TXT)         \n")
+    receipt.write("             SHOESTORE                  \n")
+    receipt.write("========================================\n\n")
+    receipt.write(f"Số HĐ       : HD-{str(invoice['id']).zfill(5)}\n")
+    receipt.write(f"Ngày phát hành: {datetime.fromisoformat(invoice['issued_at']).strftime('%d/%m/%Y %H:%M:%S')}\n")
+    receipt.write(f"Mã ĐH gốc    : ORD-2026-{str(invoice['order_id']).zfill(3)}\n")
+    receipt.write("-" * 40 + "\n")
+    receipt.write("THÔNG TIN KHÁCH HÀNG\n")
+    receipt.write(f"Tên người mua : {invoice['customer_name']}\n")
+    receipt.write(f"Tên đơn vị    : {invoice['company_name']}\n")
+    receipt.write(f"Mã số thuế    : {invoice['tax_id']}\n")
+    receipt.write(f"Địa chỉ       : {invoice['address']}\n")
+    receipt.write("-" * 40 + "\n\n")
+    receipt.write("CHI TIẾT THANH TOÁN\n")
+    receipt.write(f"TỔNG CỘNG      : {invoice['total_amount']:,} VND\n\n")
+    receipt.write("========================================\n")
+    receipt.write("      Cảm ơn quý khách đã mua hàng!     \n")
+    receipt.write("========================================\n")
+
+    content = receipt.getvalue()
+    receipt.close()
+
+    return PlainTextResponse(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="Hoa_Don_{invoice_id}.txt"'}
+    )
 
 @router.post("/accounting/cash-ledger")
 def create_cash_entry(entry: CashLedgerCreate, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_accounting_user)):
@@ -175,38 +216,41 @@ def lock_accounting_period(req: PeriodLockRequest, conn: sqlite3.Connection = De
     return {"message": f"ACC_FIN_06: ÄÃ£ khÃ³a sá»• thÃ nh cÃ´ng ká»³ káº¿ toÃ¡n {req.month}/{req.year}."}
 
 @router.get("/accounting/reports")
-def get_financial_report(year: int, month: int, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_accounting_user)):
+def get_financial_report(
+    start_time: Optional[str] = None, 
+    end_time: Optional[str] = None, 
+    conn: sqlite3.Connection = Depends(get_db), 
+    user: dict = Depends(get_accounting_user)
+):
     cursor = conn.cursor()
-    cursor.execute("SELECT status FROM accounting_periods WHERE month = ? AND year = ?", (month, year))
-    period = cursor.fetchone()
-
-    if not period or period['status'] != 'locked':
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="ACC_FIN_03: KhÃ´ng thá»ƒ láº­p bÃ¡o cÃ¡o cho ká»³ chÆ°a khÃ³a sá»• hoáº·c chÆ°a cÃ³ dá»¯ liá»‡u."
-        )
     
-    start_date_str = f"{year}-{str(month).zfill(2)}-01"
-    last_day = calendar.monthrange(year, month)[1]
-    end_date_str = f"{year}-{str(month).zfill(2)}-{last_day} 23:59:59"
+    # Default to current month if no time range is provided
+    if not start_time or not end_time:
+        now = datetime.now(timezone.utc)
+        _, last_day = calendar.monthrange(now.year, now.month)
+        start_time_sql = f"{now.year}-{now.month:02d}-01 00:00:00"
+        end_time_sql = f"{now.year}-{now.month:02d}-{last_day} 23:59:59"
+    else:
+        # Convert datetime-local format (YYYY-MM-DDTHH:MM) to SQLite format (YYYY-MM-DD HH:MM:SS)
+        start_time_sql = start_time.replace('T', ' ') + ':00'
+        end_time_sql = end_time.replace('T', ' ') + ':59'
 
-    cursor.execute(
-        "SELECT SUM(total_amount) as revenue FROM orders WHERE status = 'completed' AND created_at BETWEEN ? AND ?",
-        (start_date_str, end_date_str)
-    )
-    revenue_data = cursor.fetchone()
-    total_revenue = revenue_data['revenue'] if revenue_data and revenue_data['revenue'] else 0
-
-    # Giáº£ láº­p GiÃ¡ vá»‘n hÃ ng bÃ¡n (COGS) = 60% doanh thu Ä‘á»ƒ demo
-    cogs = total_revenue * 0.6
-    gross_profit = total_revenue - cogs
+    query = "SELECT type, SUM(amount) as total FROM cash_ledger WHERE created_at BETWEEN ? AND ? GROUP BY type"
+    params = (start_time_sql, end_time_sql)
+    
+    cursor.execute(query, params)
+    results = cursor.fetchall()
+    
+    total_income = next((row['total'] for row in results if row['type'] == 'income'), 0) or 0
+    total_expense = next((row['total'] for row in results if row['type'] == 'expense'), 0) or 0
+    net_profit = total_income - total_expense
 
     return {
-        "period": f"{month}/{year}",
-        "total_revenue": total_revenue,
-        "cogs": cogs,
-        "gross_profit": gross_profit,
-        "net_profit": gross_profit # Giáº£ láº­p lá»£i nhuáº­n rÃ²ng = lá»£i nhuáº­n gá»™p
+        "start_time": start_time_sql,
+        "end_time": end_time_sql,
+        "total_income": total_income,
+        "total_expense": total_expense,
+        "net_profit": net_profit
     }
 
 # ================= ENDPOINTS: REPORTS =================

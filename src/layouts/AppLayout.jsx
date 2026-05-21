@@ -4,7 +4,7 @@ import { Server } from 'lucide-react';
 import Header from '../components/Header.jsx';
 import CartSidebar from '../components/CartSidebar.jsx';
 import ChatWidget from '../components/ChatWidget.jsx';
-import { roleHasAccess, clearAuthTokens } from '../lib/auth.js';
+import { clearAuthTokens } from '../lib/auth.js';
 import { fetchCurrentUser } from '../lib/api.js';
 
 export default function AppLayout() {
@@ -35,7 +35,22 @@ export default function AppLayout() {
   }, []);
 
   const userRole = currentUser?.role || 'guest';
-  const hasAccess = (module) => roleHasAccess(userRole, module);
+
+  const hasAccess = (module) => {
+    if (!userRole || userRole === 'guest' || userRole === 'customer') return false;
+    if (userRole === 'admin') return true; // Admin có quyền truy cập tất cả
+    
+    // Khôi phục quyền tương thích cho các role khác dựa trên module
+    if (module === 'dashboard') return ['ketoan', 'sale', 'it'].includes(userRole);
+    if (module === 'sales') return ['sale'].includes(userRole);
+    if (module === 'orders') return ['sale'].includes(userRole);
+    if (module === 'inventory') return ['kho'].includes(userRole);
+    if (module === 'accounting') return ['ketoan'].includes(userRole);
+    if (module === 'salary') return ['ketoan'].includes(userRole);
+    if (module === 'it') return ['it'].includes(userRole);
+    
+    return false;
+  };
 
   const filteredProducts = (Array.isArray(products) ? products : []).filter((product) => {
     const safeSearchQuery = (searchQuery || '').toLowerCase();
@@ -91,77 +106,62 @@ export default function AppLayout() {
           <span className="font-medium text-blue-400 whitespace-nowrap mr-4">
             🔥 Quản trị nội bộ ({userRole.toUpperCase()})
           </span>
-          <div className="flex gap-4 min-w-max items-center">
-            {hasAccess('dashboard') && (
-              <Link to="/admin/dashboard" className="font-bold hover:text-blue-300 transition-colors">
-                Báo cáo (Dashboard)
-              </Link>
-            )}
-            {hasAccess('dashboard') && hasAccess('orders') && <span className="text-gray-600">|</span>}
-            {hasAccess('sales') && (
-              <Link to="/admin/sales" className="font-bold hover:text-cyan-300 transition-colors">
-                Bán hàng & CSKH
-              </Link>
-            )}
-            {hasAccess('sales') && hasAccess('orders') && <span className="text-gray-600">|</span>}
-            {hasAccess('orders') && (
-              <Link to="/admin/orders" className="font-bold hover:text-blue-300 transition-colors">
-                Duyệt Đơn Online
-              </Link>
-            )}
-            {hasAccess('orders') && hasAccess('inventory') && <span className="text-gray-600">|</span>}
-            {hasAccess('inventory') && (
-              <Link to="/admin/inventory" className="font-bold hover:text-orange-300 transition-colors">
-                Quản lý Kho
-              </Link>
-            )}
-            {hasAccess('inventory') && hasAccess('accounting') && <span className="text-gray-600">|</span>}
-            {hasAccess('accounting') && (
-              <Link to="/admin/accounting" className="font-bold hover:text-green-300 transition-colors">
-                Kế toán & Thu chi
-              </Link>
-            )}
-            {hasAccess('accounting') && hasAccess('product_management') && (
-              <span className="text-gray-600">|</span>
-            )}
-            {hasAccess('product_management') && (
-              <Link to="/admin/products" className="font-bold hover:text-purple-300 transition-colors">
-                Quản lý Sản phẩm
-              </Link>
-            )}
-            {hasAccess('product_management') && hasAccess('promotion_management') && (
-              <span className="text-gray-600">|</span>
-            )}
-            {hasAccess('promotion_management') && (
-              <Link to="/admin/promotions" className="font-bold hover:text-pink-300 transition-colors">
-                Quản lý Khuyến mãi
-              </Link>
-            )}
-            {hasAccess('promotion_management') && hasAccess('feedback_management') && (
-              <span className="text-gray-600">|</span>
-            )}
-            {hasAccess('feedback_management') && (
-              <Link to="/admin/feedback" className="font-bold hover:text-cyan-300 transition-colors">
-                Phản hồi khách hàng
-              </Link>
-            )}
-            {hasAccess('feedback_management') && hasAccess('salary') && (
-              <span className="text-gray-600">|</span>
-            )}
-            {hasAccess('salary') && (
-              <Link to="/admin/salary" className="font-bold hover:text-yellow-300 transition-colors">
-                Quản lý Lương
-              </Link>
-            )}
-            {hasAccess('salary') && hasAccess('it') && <span className="text-gray-600">|</span>}
-            {hasAccess('it') && (
-              <Link
-                to="/admin/it"
-                className="font-bold text-indigo-400 hover:text-indigo-300 transition-colors bg-indigo-900/50 px-3 py-1 rounded border border-indigo-500/50 flex items-center gap-1"
-              >
-                <Server className="w-3 h-3" /> IT System
-              </Link>
-            )}
+          <div className="flex items-center flex-wrap gap-x-4 gap-y-2 text-sm min-w-0 flex-1">
+            {[
+              (userRole === 'admin' || userRole === 'ketoan') && (
+                <Link key="db" to="/admin/dashboard" className="font-bold hover:text-blue-300 transition-colors">
+                  Báo cáo (Dashboard)
+                </Link>
+              ),
+              (userRole === 'admin' || userRole === 'sale') && (
+                <Link key="sale" to="/admin/sales" className="font-bold hover:text-cyan-300 transition-colors">
+                  Bán hàng & CSKH
+                </Link>
+              ),
+              userRole === 'admin' && (
+                <Link key="ord" to="/admin/orders" className="font-bold hover:text-blue-300 transition-colors">
+                  Duyệt Đơn Online
+                </Link>
+              ),
+              (userRole === 'admin' || userRole === 'kho') && (
+                <Link key="inv" to="/admin/inventory" className="font-bold hover:text-orange-300 transition-colors">
+                  Quản lý Kho
+                </Link>
+              ),
+              (userRole === 'admin' || userRole === 'ketoan') && (
+                <Link key="acc" to="/admin/accounting" className="font-bold hover:text-green-300 transition-colors">
+                  Kế toán & Thu chi
+                </Link>
+              ),
+              userRole === 'admin' && (
+                <Link key="prod" to="/admin/products" className="font-bold hover:text-purple-300 transition-colors">
+                  Quản lý Sản phẩm
+                </Link>
+              ),
+              userRole === 'admin' && (
+                <Link key="promo" to="/admin/promotions" className="font-bold hover:text-pink-300 transition-colors">
+                  Quản lý Khuyến mãi
+                </Link>
+              ),
+              userRole === 'admin' && (
+                <Link key="feed" to="/admin/feedback" className="font-bold hover:text-cyan-300 transition-colors">
+                  Phản hồi khách hàng
+                </Link>
+              ),
+              (userRole === 'admin' || userRole === 'ketoan') && (
+                <Link key="sal" to="/admin/salary" className="font-bold hover:text-yellow-300 transition-colors">
+                  Quản lý Lương
+                </Link>
+              ),
+              (userRole === 'admin' || userRole === 'it') && (
+                <Link key="it" to="/admin/it" className="font-bold text-indigo-400 hover:text-indigo-300 transition-colors bg-indigo-900/50 px-3 py-1 rounded border border-indigo-500/50 flex items-center gap-1">
+                  <Server className="w-3 h-3" /> IT System
+                </Link>
+              )
+            ].filter(Boolean).reduce((prev, curr, index) => {
+              if (prev === null) return curr; // First element
+              return [prev, <span key={`sep-${index}`} className="text-gray-600 select-none px-2">|</span>, curr];
+            }, null)}
           </div>
         </div>
       )}
