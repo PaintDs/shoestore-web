@@ -8,8 +8,8 @@ const InventoryManagement = ({ onBack }) => {
   const [actualQty, setActualQty] = useState(''); // State cho số lượng thực tế
   const [countReason, setCountReason] = useState(''); // State cho lý do kiểm kê
   const [pendingOrders, setPendingOrders] = useState([]); // State mới cho đơn hàng chờ xuất
-  const [products, setProducts] = useState([]); // To populate product dropdown in inbound form
-  const [returnsHistory, setReturnsHistory] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [pendingReturns, setPendingReturns] = useState([]); // State mới cho các yêu cầu hoàn hàng
   const [selectedProductId, setSelectedProductId] = useState(''); // State cho form nhập kho
   // Helper function for order ID formatting
   const formatOrderId = (id) => {
@@ -47,24 +47,24 @@ const InventoryManagement = ({ onBack }) => {
     }
   };
 
-  const fetchReturnsHistory = async () => {
+  const fetchPendingReturns = async () => {
     try {
       const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
-      const response = await fetch('/api/warehouse/returns/history', {
+      const response = await fetch('/api/warehouse/pending-returns', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!response.ok) {
-        // Nếu response không OK, ném lỗi để block catch xử lý, tránh set state bằng object lỗi
         const errorData = await response.json().catch(() => ({ detail: 'Lỗi không xác định từ server.' }));
-        throw new Error(errorData.detail || 'Không thể tải lịch sử hàng hoàn.');
+        throw new Error(errorData.detail || 'Không thể tải danh sách hàng chờ hoàn.');
       }
       const data = await response.json();
-      setReturnsHistory(data);
+      setPendingReturns(data);
     } catch (error) {
-      console.error("Lỗi khi lấy lịch sử hàng hoàn:", error);
-      setReturnsHistory([]); // Đảm bảo là mảng rỗng khi có lỗi để tránh crash
+      console.error("Lỗi khi lấy danh sách hàng chờ hoàn:", error);
+      setPendingReturns([]);
     }
   };
+
 
   // Hàm mới: Lấy lịch sử kiểm kê
   const fetchCountHistory = async () => {
@@ -114,7 +114,7 @@ const InventoryManagement = ({ onBack }) => {
     } else if (activeTab === 'count') {
       fetchCountHistory();
     } else if (activeTab === 'returns') {
-      fetchReturnsHistory();
+      fetchPendingReturns();
     }
   }, [activeTab]); // Chỉ phụ thuộc vào sự kiện chuyển activeTab
 
@@ -205,7 +205,7 @@ const InventoryManagement = ({ onBack }) => {
 
   // Hàm mới: Xử lý hàng hoàn (Nhập lại kho)
   const handleProcessReturn = async (item) => {
-    if (!window.confirm(`Bạn có chắc chắn muốn nhập lại kho sản phẩm "${item.product_name}" (Số lượng: ${item.quantity})?`)) {
+    if (!window.confirm(`Xác nhận nhập lại kho sản phẩm "${item.product_name}" (SL: ${item.quantity}) từ đơn hàng ORD-${item.order_id}?`)) {
       return;
     }
 
@@ -216,12 +216,11 @@ const InventoryManagement = ({ onBack }) => {
         return;
       }
 
-      // Payload cho POST /api/warehouse/returns
-      // Giả định 'Nhập lại kho' có nghĩa là hàng tốt và cần cộng lại tồn kho
       const payload = {
         product_id: item.product_id,
         quantity: item.quantity,
-        reason: 'good' // Lý do 'good' sẽ khiến backend cộng lại tồn kho
+        order_id: item.order_id,
+        reason: 'good'
       };
 
       const response = await fetch('/api/warehouse/returns', {
@@ -233,7 +232,7 @@ const InventoryManagement = ({ onBack }) => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Xử lý hàng hoàn thất bại.');
       alert(data.message);
-      fetchReturnsHistory(); // Gọi lại hàm lấy lịch sử để cập nhật UI
+      fetchPendingReturns(); // Tải lại danh sách yêu cầu hoàn hàng
     } catch (error) {
       console.error("Lỗi khi xử lý hàng hoàn:", error);
       alert(`Lỗi: ${error.message}`);
@@ -625,43 +624,40 @@ const InventoryManagement = ({ onBack }) => {
 
         {activeTab === 'returns' && (
           <div className="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">Hàng hoàn</h2>
-            {/* Bảng Lịch sử Hàng hoàn */}
+            <h2 className="text-2xl font-bold text-gray-800 mb-4">Yêu cầu hoàn hàng đang chờ xử lý</h2>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mã phiếu</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mã Đơn Hàng</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Khách hàng</th>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tên sản phẩm</th>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Số lượng</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lý do</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ngày hoàn</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ngày yêu cầu</th>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hành động</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {Array.isArray(returnsHistory) && returnsHistory.length > 0 ? (
-                    returnsHistory.map((item) => (
-                      <tr key={item.id}>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">WHRT-{item.id.toString().padStart(4, '0')}</td>
+                  {Array.isArray(pendingReturns) && pendingReturns.length > 0 ? (
+                    pendingReturns.map((item) => (
+                      <tr key={item.order_item_id}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">ORD-{item.order_id}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.customer_name}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.product_name || 'Sản phẩm không tồn tại'}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.quantity}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.reason || 'Không rõ'}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(item.created_at).toLocaleString()}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(item.created_at).toLocaleString('vi-VN')}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                          {item.reason !== 'good' && ( // Chỉ hiển thị nút nếu lý do không phải là 'good'
-                            <button
-                              onClick={() => handleProcessReturn(item)}
-                              className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-                            >
-                              Nhập lại kho
-                            </button>
-                          )}
+                          <button
+                            onClick={() => handleProcessReturn(item)}
+                            className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                          >
+                            Xác nhận Nhận hàng & Nhập kho
+                          </button>
                         </td>
                       </tr>
                     ))
                   ) : (
-                    <tr><td colSpan="5" className="text-center py-4 text-gray-500">Không có lịch sử hàng hoàn</td></tr>
+                    <tr><td colSpan="6" className="text-center py-4 text-gray-500">Không có yêu cầu hoàn hàng nào đang chờ xử lý.</td></tr>
                   )}
                 </tbody>
               </table>

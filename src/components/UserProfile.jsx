@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Package, MapPin, LogOut, ArrowLeft, CheckCircle, Clock, Truck, Star, Send } from 'lucide-react';
+import { User, Package, MapPin, LogOut, ArrowLeft, CheckCircle, Clock, Truck, Star, Send, RotateCcw } from 'lucide-react';
 
 const UserProfile = ({ currentUser, onBack, onLogout }) => {
   const [activeTab, setActiveTab] = useState('orders');
@@ -93,6 +93,34 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
     }
   };
 
+  const handleRequestReturn = async (orderId) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn gửi yêu cầu hoàn trả cho đơn hàng ORD-${String(orderId).padStart(4, '0')}? Nhân viên sẽ liên hệ với bạn để xác nhận.`)) {
+        return;
+    }
+
+    try {
+        const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
+        const response = await fetch(`/api/user/orders/${orderId}/request-return`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.detail || 'Gửi yêu cầu hoàn hàng thất bại.');
+        }
+
+        alert(data.message);
+        // Tải lại danh sách đơn hàng để cập nhật trạng thái mới
+        fetchUserOrders();
+    } catch (error) {
+        alert(`Lỗi: ${error.message}`);
+    }
+  };
+
   const handleOpenFeedbackModal = (product) => {
     setCurrentProductToReview(product);
     setFeedbackForm({ rating: 5, comment: '' });
@@ -137,6 +165,8 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
       case 'completed': return <span className="bg-green-100 text-green-800 text-xs px-3 py-1 rounded-full font-bold flex items-center w-fit gap-1"><CheckCircle className="w-4 h-4"/> Đã giao thành công</span>;
       case 'pending': return <span className="bg-yellow-100 text-yellow-800 text-xs px-3 py-1 rounded-full font-bold flex items-center w-fit gap-1"><Clock className="w-4 h-4"/> Chờ xác nhận</span>;
       case 'cancelled': return <span className="bg-red-100 text-red-800 text-xs px-3 py-1 rounded-full font-bold flex items-center w-fit gap-1">Đã hủy</span>;
+      case 'pending_return': return <span className="bg-orange-100 text-orange-800 text-xs px-3 py-1 rounded-full font-bold flex items-center w-fit gap-1"><RotateCcw className="w-4 h-4"/> Chờ xử lý hoàn</span>;
+      case 'returned_received': return <span className="bg-blue-100 text-blue-800 text-xs px-3 py-1 rounded-full font-bold flex items-center w-fit gap-1"><CheckCircle className="w-4 h-4"/> Đã nhận hàng hoàn</span>;
       default: return <span className="bg-gray-100 text-gray-800 text-xs px-3 py-1 rounded-full font-bold flex items-center w-fit gap-1">{status}</span>;
     }
   };
@@ -147,6 +177,7 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
     { id: 'shipping', label: 'Đang giao' },
     { id: 'completed', label: 'Đã giao' },
     { id: 'cancelled', label: 'Đã hủy' },
+    { id: 'returns', label: 'Đổi/Trả' },
   ];
 
   return (
@@ -246,6 +277,16 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
                               className="text-sm text-green-600 bg-green-100 px-3 py-1.5 rounded-lg font-bold hover:bg-green-200"
                             >
                               Đã nhận được hàng
+                            </button>
+                          )}
+                          {order.status === 'completed' && (
+                            <button
+                              type="button"
+                              onClick={() => handleRequestReturn(order.id)}
+                              className="text-sm text-red-600 bg-red-100 px-3 py-1.5 rounded-lg font-bold hover:bg-red-200 flex items-center gap-1"
+                            >
+                              <RotateCcw size={14}/>
+                              Yêu cầu hoàn hàng
                             </button>
                           )}
                         </div>

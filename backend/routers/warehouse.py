@@ -20,6 +20,12 @@ router = APIRouter(
 class WarehouseSlipCreate(BaseModel):
     product_id: int; quantity: int; reason: Optional[str] = None
 
+class ReturnProcessRequest(BaseModel):
+    product_id: int
+    quantity: int
+    order_id: int
+    reason: Optional[str] = None
+
 class InventoryCountCreate(BaseModel):
     product_id: int; actual_qty: int; reason: str
 
@@ -50,6 +56,29 @@ def get_inbound_history(conn: sqlite3.Connection = Depends(get_db), user: dict =
         FROM warehouse_slips ws
         LEFT JOIN products p ON ws.product_id = p.id
         WHERE ws.type = 'in' ORDER BY ws.created_at DESC
+    """
+    cursor.execute(query)
+    return [dict(row) for row in cursor.fetchall()]
+
+@router.get("/pending-returns")
+def get_pending_returns(conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_warehouse_user)):
+    """
+    Lấy danh sách các sản phẩm từ các đơn hàng đang chờ xử lý hoàn trả (status = 'pending_return').
+    """
+    cursor = conn.cursor()
+    query = """
+        SELECT
+            o.id as order_id,
+            oi.id as order_item_id,
+            oi.product_id,
+            oi.product_name,
+            oi.quantity,
+            o.customer_name,
+            o.created_at
+        FROM orders o
+        JOIN order_items oi ON o.id = oi.order_id
+        WHERE o.status = 'pending_return'
+        ORDER BY o.created_at ASC
     """
     cursor.execute(query)
     return [dict(row) for row in cursor.fetchall()]
@@ -107,23 +136,34 @@ def get_inventory_count_history(conn: sqlite3.Connection = Depends(get_db), user
     return [dict(row) for row in cursor.fetchall()]
 
 @router.post("/returns")
-def process_return(req: WarehouseSlipCreate, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_warehouse_user)):
+def process_return(req: ReturnProcessRequest, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_warehouse_user)):
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM products WHERE id = ?", (req.product_id,))
-    if not cursor.fetchone():
-        raise HTTPException(status_code=404, detail="Sản phẩm không tồn tại.")
+    try:
+        # Kiểm tra sự tồn tại của sản phẩm và đơn hàng
+        cursor.execute("SELECT id FROM products WHERE id = ?", (req.product_id,))
+        if not cursor.fetchone():
+            raise ValueError("Sản phẩm không tồn tại.")
+        
+        cursor.execute("SELECT id FROM orders WHERE id = ?", (req.order_id,))
+        if not cursor.fetchone():
+            raise ValueError("Đơn hàng không tồn tại.")
 
-    if req.reason == 'good':
-        cursor.execute("UPDATE products SET stock = stock + ? WHERE id = ?", (req.quantity, req.product_id))
-        cursor.execute("INSERT INTO warehouse_slips (type, product_id, quantity) VALUES ('return', ?, ?)", (req.product_id, req.quantity))
+        # Bước 1: Cập nhật tồn kho nếu hàng tốt
+        if req.reason == 'good':
+            cursor.execute("UPDATE products SET stock = stock + ? WHERE id = ?", (req.quantity, req.product_id))
+        
+        # Bước 2: Ghi nhận lịch sử vào phiếu kho
+        cursor.execute("INSERT INTO warehouse_slips (type, product_id, quantity ) VALUES ('return', ?, ?)", (req.product_id, req.quantity,))
+        
+        # Bước 3: Cập nhật trạng thái đơn hàng
+        cursor.execute("UPDATE orders SET status = 'returned_received' WHERE id = ?", (req.order_id,))
+        
         conn.commit()
-        return {"message": "WH_RETURN_03: Hàng tốt, đã nhập lại tồn kho."}
-    elif req.reason == 'bad':
-        cursor.execute("INSERT INTO warehouse_slips (type, product_id, quantity) VALUES ('return', ?, ?)", (req.product_id, req.quantity))
-        conn.commit()
-        return {"message": "WH_RETURN_04: Hàng lỗi, đã chuyển sang khu vực hàng hỏng."}
-    
-    raise HTTPException(status_code=400, detail="Tình trạng hàng không hợp lệ.")
+
+        return {"message": "Xử lý hàng hoàn thành công, đã cập nhật tồn kho và trạng thái đơn hàng."}
+    except (sqlite3.Error, ValueError) as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=f"Lỗi khi xử lý hàng hoàn: {str(e)}")
 
 
 @router.get("/report")

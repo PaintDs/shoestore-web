@@ -372,8 +372,12 @@ def get_user_orders(
     query = "SELECT * FROM orders WHERE user_id = ?"
     params: list = [current_user["id"]]
     if status:
-        query += " AND status = ?"
-        params.append(status)
+        if status == 'returns':
+            query += " AND status IN (?, ?)"
+            params.extend(['pending_return', 'returned_received'])
+        else:
+            query += " AND status = ?"
+            params.append(status)
     query += " ORDER BY created_at DESC"
     cursor.execute(query, params)
     orders = [dict(row) for row in cursor.fetchall()]
@@ -395,6 +399,28 @@ def get_user_order_detail(order_id: int, conn: sqlite3.Connection = Depends(get_
     cursor.execute("SELECT * FROM order_items WHERE order_id = ?", (order_id,))
     order_dict['items'] = [dict(row) for row in cursor.fetchall()]
     return order_dict
+
+@router.post("/user/orders/{order_id}/request-return", summary="Khách hàng gửi yêu cầu hoàn hàng")
+def request_order_return(order_id: int, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_current_user)):
+    """
+    Cho phép khách hàng gửi yêu cầu hoàn trả cho một đơn hàng đã hoàn thành.
+    Hệ thống sẽ chuyển trạng thái đơn hàng thành 'pending_return'.
+    Nhân viên kho sẽ thấy yêu cầu này và xử lý ở bước tiếp theo.
+    """
+    cursor = conn.cursor()
+    # Xác thực đơn hàng thuộc về người dùng và đang ở trạng thái có thể hoàn trả
+    cursor.execute("SELECT status FROM orders WHERE id = ? AND user_id = ?", (order_id, user["id"]))
+    order = cursor.fetchone()
+
+    if not order:
+        raise HTTPException(status_code=404, detail="Không tìm thấy đơn hàng hoặc bạn không có quyền truy cập.")
+    
+    if order['status'] != 'completed':
+        raise HTTPException(status_code=400, detail=f"Không thể yêu cầu hoàn hàng cho đơn ở trạng thái '{order['status']}'. Chỉ chấp nhận đơn đã hoàn thành.")
+
+    cursor.execute("UPDATE orders SET status = 'pending_return' WHERE id = ?", (order_id,))
+    conn.commit()
+    return {"message": "Yêu cầu hoàn hàng đã được gửi thành công. Vui lòng chờ nhân viên kho xử lý."}
 
 @router.post("/user/orders/{order_id}/cancel")
 def cancel_user_order(
