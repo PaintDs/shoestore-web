@@ -7,7 +7,7 @@ import google.generativeai as genai
 router = APIRouter(tags=["Chatbot AI"])
 
 # Khởi tạo API Key (Lấy từ môi trường hoặc cấu hình mặc định)
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyApi8BKXACy2R5MRFn4WDwCbu1-lCySn3g")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
 class ChatRequest(BaseModel):
