@@ -69,44 +69,58 @@ const Checkout = ({ onBack, cartItems, onCheckoutSuccess, currentUser }) => {
         return;
       }
 
+      // Dọn dẹp và chuẩn hóa payload gửi đi
       const payload = {
-        customer_name: customerInfo.name,
+        customerName: customerInfo.name,
         phone: customerInfo.phone,
         address: customerInfo.address,
-        payment_method: paymentMethod,
-        cart_items: cartItems,
-        voucher_code: voucherCode.trim() || null,
+        paymentMethod: paymentMethod,
+        cartItems: cartItems.map(item => ({
+            id: Number(item.id),
+            productId: Number(item.id), // Gửi cả 2 key để an toàn tuyệt đối
+            quantity: Number(item.quantity),
+            price: Number(item.price),
+            name: item.name || "Sản phẩm"
+        })),
+        voucherCode: voucherCode.trim() || null,
       };
 
       const response = await fetch('/api/checkout', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(payload)
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        const errorText = await response.text();
-        let detailMessage;
-        try {
-          detailMessage = JSON.parse(errorText).detail;
-        } catch {
-          detailMessage = errorText;
-        }
-        throw new Error(detailMessage || 'Đặt hàng thất bại.');
+        // Ném lỗi để khối catch bên dưới xử lý tập trung
+        const error = new Error(data.detail || "Lỗi từ server");
+        error.response = { data }; // Gắn kèm data để catch có thể đọc
+        throw error;
       }
 
-      const data = await response.json();
       if (paymentMethod === 'Online' && data.payment_url) {
         window.open(data.payment_url, '_blank');
       }
       alert(data.message || "🎉 Đặt hàng thành công! Đơn hàng của bạn đang chờ xác nhận.");
       onCheckoutSuccess();
-    } catch (err) {
-      setError(err.message);
-      alert(`Lỗi: ${err.message}`);
+    } catch (error) {
+        console.error("CHI TIẾT LỖI CHECKOUT:", error.response?.data);
+        setError(error.message); // Cập nhật state lỗi để hiển thị trên UI nếu cần
+        if (error.response && error.response.data) {
+            const data = error.response.data;
+            if (Array.isArray(data.detail)) {
+                const errorMessages = data.detail.map(err => `+ Trường ${err.loc[err.loc.length - 1]}: ${err.msg}`);
+                alert(`Dữ liệu đơn hàng không hợp lệ:\n${errorMessages.join('\n')}`);
+            } else if (data.detail) {
+                alert(`Lỗi: ${data.detail}`);
+            } else {
+                alert(`Lỗi hệ thống: ${JSON.stringify(data)}`);
+            }
+        } else {
+            alert("Lỗi mạng: Không thể kết nối đến máy chủ!");
+        }
     }
   };
 

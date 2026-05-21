@@ -3,7 +3,8 @@ import sqlite3
 import random
 import re
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic.alias_generators import to_camel
 from datetime import datetime, timezone
 
 from database import get_db
@@ -22,21 +23,52 @@ class CartItemAdd(BaseModel):
 class CartItemUpdate(BaseModel):
     product_id: int; quantity: int; stock: int
 
+# 1. CHUẨN HÓA MODEL SẠCH
+class CheckoutItem(BaseModel):
+    # Bẫy trường: Khai báo cả 2 để Frontend gửi kiểu gì Backend cũng nhận được!
+    id: Optional[int] = None
+    product_id: Optional[int] = None
+    quantity: int
+    price: int
+    name: Optional[str] = None
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,  # Chấp nhận cả product_id và productId
+        from_attributes=True
+    )
+
 class CheckoutRequest(BaseModel):
-    customer_name: str; phone: str; address: str; payment_method: str
-    cart_items: list; voucher_code: Optional[str] = None # Giữ lại để frontend gửi lên
+    customer_name: str
+    phone: str
+    address: str
+    payment_method: str
+    cart_items: List[CheckoutItem]
+    voucher_code: Optional[str] = None
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True, # Chấp nhận cả customer_name và customerName
+        from_attributes=True
+    )
 
 class ApplyVoucherRequest(BaseModel):
     voucher_code: str
     cart_total: int
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        from_attributes=True
+    )
 
 class CustomerCreate(BaseModel):
     name: str; phone: str
 
 class SaleOrderItem(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, from_attributes=True)
     product_id: int; quantity: int
 
 class SaleOrderCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, from_attributes=True)
     customer_id: Optional[int] = None
     customer_name: str; phone: str; order_type: str
     items: list[SaleOrderItem]
@@ -49,7 +81,36 @@ class OrderCancelRequest(BaseModel):
     reason: str
 
 class PromotionUpdate(BaseModel):
-    name: Optional[str] = None; discount_percentage: Optional[float] = None; min_order_amount: Optional[int] = None; start_date: Optional[datetime] = None; end_date: Optional[datetime] = None; status: Optional[str] = None
+    name: Optional[str] = None
+    discount_type: Optional[str] = None
+    discount_value: Optional[float] = None
+    max_discount_amount: Optional[int] = None
+    min_order_value: Optional[int] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    status: Optional[str] = None
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        from_attributes=True
+    )
+    @model_validator(mode='before')
+    @classmethod
+    def clean_frontend_payload(cls, data: any) -> any:
+        if isinstance(data, dict):
+            def parse_vn_date(val):
+                if isinstance(val, str) and ('SA' in val or 'CH' in val):
+                    try:
+                        val_en = val.replace(' SA', ' AM').replace(' CH', ' PM')
+                        return datetime.strptime(val_en, '%d/%m/%Y %I:%M %p')
+                    except ValueError:
+                        pass
+                return val
+            for key in ['startDate', 'start_date', 'endDate', 'end_date']:
+                if key in data:
+                    data[key] = parse_vn_date(data[key])
+        return data
 
 # ================= ENDPOINTS: CART =================
 
@@ -139,7 +200,7 @@ def apply_voucher(req: ApplyVoucherRequest, conn: sqlite3.Connection = Depends(g
     if voucher['discount_type'] == 'fixed':
         discount_amount = voucher['discount_value']
     elif voucher['discount_type'] == 'percentage':
-        discount_amount = req.cart_total * (voucher['discount_value'] / 100)
+        discount_amount = req.cart_total * voucher['discount_value']
         if voucher['max_discount_amount'] and discount_amount > voucher['max_discount_amount']:
             discount_amount = voucher['max_discount_amount']
     
@@ -162,7 +223,7 @@ def process_checkout(req: CheckoutRequest, conn: sqlite3.Connection = Depends(ge
     
     try:
         # CHỈ THỊ 3: Bọc toàn bộ logic trong một giao dịch (transaction)
-        cart_total = sum(item["quantity"] * item["price"] for item in req.cart_items)
+        cart_total = sum(item.quantity * item.price for item in req.cart_items)
 
         # Tái xác thực voucher bên trong giao dịch để chống race condition
         if req.voucher_code:
@@ -186,7 +247,7 @@ def process_checkout(req: CheckoutRequest, conn: sqlite3.Connection = Depends(ge
             # Tính toán lại số tiền giảm
             if voucher['discount_type'] == 'fixed': discount_amount = voucher['discount_value']
             elif voucher['discount_type'] == 'percentage':
-                discount_amount = cart_total * (voucher['discount_value'] / 100)
+                discount_amount = cart_total * voucher['discount_value']
                 if voucher['max_discount_amount'] and discount_amount > voucher['max_discount_amount']: discount_amount = voucher['max_discount_amount']
             voucher_id = voucher['id']
 
@@ -198,10 +259,28 @@ def process_checkout(req: CheckoutRequest, conn: sqlite3.Connection = Depends(ge
         order_id = cursor.lastrowid
         
         # Trừ tồn kho và chèn order_items
+        # 2. LÀM SẠCH VÒNG LẶP TRỪ KHO
         for item in req.cart_items:
-            cursor.execute("UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?", (item['quantity'], item.get('product_id'), item['quantity']))
-            if cursor.rowcount == 0: raise ValueError(f"Sản phẩm {item.get('name')} không đủ tồn kho hoặc đã hết hàng.")
-            cursor.execute("INSERT INTO order_items (order_id, product_id, product_name, quantity) VALUES (?, ?, ?, ?)", (order_id, item.get('product_id'), item.get('name'), item['quantity']))
+            p_id = item.id or item.product_id
+            if not p_id:
+                raise ValueError(f"Sản phẩm '{item.name or 'Không tên'}' trong giỏ hàng thiếu mã ID.")
+
+            try:
+                # Thực hiện câu lệnh atomic update trừ kho dựa trên Object property
+                cursor.execute("UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?", (item.quantity, p_id, item.quantity))
+                if cursor.rowcount == 0:
+                    # Truy vấn nhanh số kho thực tế để in ra terminal phục vụ debug dữ liệu
+                    cursor.execute("SELECT stock FROM products WHERE id = ?", (p_id,))
+                    db_stock = cursor.fetchone()
+                    actual_stock = db_stock[0] if db_stock else "N/A"
+                    print(f"DEBUG KHO: San pham ID {p_id} khong du hang. Yeu cau: {item.quantity}, Thuc te trong DB: {actual_stock}")
+                    
+                    raise ValueError(f"Sản phẩm {item.name or 'ID ' + str(p_id)} không đủ tồn kho hoặc đã hết hàng.")
+                
+                # Chèn vào bảng order_items
+                cursor.execute("INSERT INTO order_items (order_id, product_id, product_name, quantity) VALUES (?, ?, ?, ?)", (order_id, p_id, item.name or "Sản phẩm", item.quantity))
+            except sqlite3.Error as db_err:
+                raise ValueError(f"Lỗi kết nối cơ sở dữ liệu: {db_err}")
 
         # Cập nhật lượt sử dụng voucher và ghi lịch sử
         if voucher_id:
@@ -448,31 +527,6 @@ def get_promotions(conn: sqlite3.Connection = Depends(get_db), current_user: dic
     cursor.execute("SELECT * FROM promotions ORDER BY start_date DESC")
     promotions = [dict(row) for row in cursor.fetchall()]
     return promotions
-
-@router.post("/promotions")
-def create_promotion(promo: PromotionCreate, conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    if current_user["role"] not in ["admin"]:
-        raise HTTPException(status_code=403, detail="Bạn không có quyền tạo khuyến mãi.")
-    
-    if promo.start_date >= promo.end_date:
-        raise HTTPException(status_code=400, detail="Ngày kết thúc phải sau ngày bắt đầu.")
-    
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM promotions WHERE code = ?", (promo.code,))
-    if cursor.fetchone():
-        raise HTTPException(status_code=400, detail="Mã khuyến mãi đã tồn tại.")
-    
-    status = "upcoming"
-    # So sánh với thời gian UTC hiện tại để xác định trạng thái
-    if promo.start_date <= datetime.now(timezone.utc) < promo.end_date:
-        status = "active"
-
-    cursor.execute(
-        "INSERT INTO promotions (name, code, discount_percentage, min_order_amount, start_date, end_date, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (promo.name, promo.code, promo.discount_percentage, promo.min_order_amount, promo.start_date, promo.end_date, status)
-    )
-    conn.commit()
-    return {"message": "Tạo khuyến mãi thành công!", "id": cursor.lastrowid}
 
 @router.put("/promotions/{promo_id}")
 def update_promotion(promo_id: int, promo_update: PromotionUpdate, conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_current_user)):

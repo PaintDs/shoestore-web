@@ -6,8 +6,8 @@ const PromotionManagement = ({ onBack }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newPromotionForm, setNewPromotionForm] = useState({
-    name: '', code: '', discount_percentage: '', min_order_amount: '',
+  const [newPromotionForm, setNewPromotionForm] = useState({ // Đã thêm usage_limit
+    name: '', code: '', discount_percentage: '', min_order_amount: '', max_discount_amount: '',
     start_date: '', end_date: ''
   });
 
@@ -42,12 +42,17 @@ const PromotionManagement = ({ onBack }) => {
   const handleCreatePromotion = async (e) => {
     e.preventDefault();
     try {
+      // Chuẩn hóa payload để khớp với Pydantic Model (đã có alias_generator)
       const promoData = {
-        ...newPromotionForm,
-        discount_percentage: parseFloat(newPromotionForm.discount_percentage),
-        min_order_amount: parseInt(newPromotionForm.min_order_amount, 10),
-        start_date: newPromotionForm.start_date.replace('T', ' '),
-        end_date: newPromotionForm.end_date.replace('T', ' '),
+        name: newPromotionForm.name, // Giữ nguyên snake_case, Pydantic sẽ tự map
+        code: newPromotionForm.code, // Giữ nguyên snake_case
+        discount_type: 'percentage',
+        discount_value: parseFloat(newPromotionForm.discount_percentage),
+        max_discount_amount: parseInt(newPromotionForm.max_discount_amount, 10) || 99999999,
+        min_order_value: parseInt(newPromotionForm.min_order_amount, 10),
+        usage_limit: 1000, // Thêm trường usage_limit bắt buộc với giá trị mặc định
+        start_date: new Date(newPromotionForm.start_date).toISOString(), // Parse chuẩn ISO 8601
+        end_date: new Date(newPromotionForm.end_date).toISOString(),     // Parse chuẩn ISO 8601
       };
 
       const response = await fetch('/api/promotions', {
@@ -57,11 +62,18 @@ const PromotionManagement = ({ onBack }) => {
       });
       const data = await response.json();
       if (!response.ok) {
+        if (Array.isArray(data.detail)) {
+          const errorMessages = data.detail.map(err => `Trường [${err.loc[err.loc.length - 1]}]: ${err.msg}`).join('\n');
+          throw new Error(`Dữ liệu không hợp lệ:\n${errorMessages}`);
+        }
         throw new Error(data.detail || 'Lỗi khi tạo khuyến mãi.');
       }
       alert('Tạo khuyến mãi thành công!');
       setShowCreateModal(false);
-      setNewPromotionForm({ name: '', code: '', discount_percentage: '', min_order_amount: '', start_date: '', end_date: '' });
+      setNewPromotionForm({
+        name: '', code: '', discount_percentage: '', min_order_amount: '', max_discount_amount: '',
+        start_date: '', end_date: ''
+      });
       fetchPromotions(); // Refresh list
     } catch (err) {
       alert(`Lỗi: ${err.message}`);
@@ -133,8 +145,8 @@ const PromotionManagement = ({ onBack }) => {
                     <td className="p-4 font-bold">{promo.id}</td>
                     <td className="p-4 font-medium">{promo.name}</td>
                     <td className="p-4 font-mono text-pink-600">{promo.code}</td>
-                    <td className="p-4">{promo.discount_percentage * 100}%</td>
-                    <td className="p-4">{new Intl.NumberFormat('vi-VN').format(promo.min_order_amount)} VNĐ</td>
+                    <td className="p-4">{promo.discount_value * 100}%</td>
+                    <td className="p-4">{new Intl.NumberFormat('vi-VN').format(promo.min_order_value)} VNĐ</td>
                     <td className="p-4">{formatDateTime(promo.start_date)}</td>
                     <td className="p-4">{formatDateTime(promo.end_date)}</td>
                     <td className="p-4">
@@ -183,9 +195,15 @@ const PromotionManagement = ({ onBack }) => {
                   <input required type="number" step="0.01" min="0" max="1" placeholder="0.1 (10%) hoặc 0.25 (25%)" value={newPromotionForm.discount_percentage} onChange={e => setNewPromotionForm({ ...newPromotionForm, discount_percentage: e.target.value })} className="w-full border p-2.5 rounded-xl outline-none focus:border-pink-500" />
                 </div>
               </div>
-              <div>
-                <label className="block text-sm font-semibold mb-1">Giá trị đơn hàng tối thiểu (VNĐ)</label>
-                <input required type="number" min="0" placeholder="500000" value={newPromotionForm.min_order_amount} onChange={e => setNewPromotionForm({ ...newPromotionForm, min_order_amount: e.target.value })} className="w-full border p-2.5 rounded-xl outline-none focus:border-pink-500" />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold mb-1">Giá trị đơn hàng tối thiểu (VNĐ)</label>
+                  <input required type="number" min="0" placeholder="500000" value={newPromotionForm.min_order_amount} onChange={e => setNewPromotionForm({ ...newPromotionForm, min_order_amount: e.target.value })} className="w-full border p-2.5 rounded-xl outline-none focus:border-pink-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold mb-1">Số tiền giảm tối đa (VNĐ)</label>
+                  <input type="number" min="1" placeholder="VD: 100000" value={newPromotionForm.max_discount_amount} onChange={e => setNewPromotionForm({ ...newPromotionForm, max_discount_amount: e.target.value })} className="w-full border p-2.5 rounded-xl outline-none focus:border-pink-500" />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

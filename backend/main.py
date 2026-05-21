@@ -12,6 +12,8 @@ from routers.warehouse import router as warehouse_router
 from routers.accounting import router as accounting_router
 from routers.payroll import router as payroll_router
 from routers.system import router as system_router
+from routers.feedback import router as feedback_router
+from routers.reports import router as reports_router
 
 app = FastAPI(
     title="ShoeStore API",
@@ -38,6 +40,8 @@ app.include_router(warehouse_router)
 app.include_router(accounting_router)
 app.include_router(payroll_router)
 app.include_router(system_router)
+app.include_router(feedback_router)
+app.include_router(reports_router)
 
 # Cấu hình phục vụ file tĩnh và SPA (Single Page Application)
 # Endpoint này sẽ bắt tất cả các request không khớp với các API đã định nghĩa ở trên.

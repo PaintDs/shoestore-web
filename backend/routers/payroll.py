@@ -2,13 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import PlainTextResponse
 import sqlite3
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 import csv
 import io
 
 from database import get_db
 from .auth import get_current_user, get_accounting_user
-from services import payroll_service as ps
 
 router = APIRouter(
     prefix="/api",
@@ -16,10 +15,16 @@ router = APIRouter(
 )
 
 class SalarySetup(BaseModel):
-    user_id: int; base_salary: int; coefficient: float = 1.0
+    user_id: int
+    base_salary: int
+    coefficient: float = 1.0
+    model_config = ConfigDict(populate_by_name=True, from_attributes=True)
 
 class TimesheetEntry(BaseModel):
-    user_id: int; work_date: str; hours_worked: float
+    user_id: int
+    work_date: str
+    hours_worked: float
+    model_config = ConfigDict(populate_by_name=True, from_attributes=True)
 
 class BonusPenaltyRequest(BaseModel):
     user_id: int
@@ -27,444 +32,140 @@ class BonusPenaltyRequest(BaseModel):
     year: int = Field(..., ge=2000, le=2100)
     amount: int
     reason: str = Field(..., min_length=1, max_length=500)
+    model_config = ConfigDict(populate_by_name=True, from_attributes=True)
 
 
-def _require_payroll_role(user: dict, allow_self_user_id: Optional[int] = None, target_user_id: Optional[int] = None) -> None:
-    if user["role"] in ("admin", "ketoan"):
-        return
-    if allow_self_user_id is not None and target_user_id == allow_self_user_id and user["id"] == target_user_id:
-        return
-    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bạn không có quyền thực hiện thao tác lương này.")
+# ================= ENDPOINTS: SALARIES / PAYROLL =================
 
-
-def _fetch_payroll_rows(cursor: sqlite3.Cursor, year: int, month: int) -> List[dict]:
-    cursor.execute(
-        """
-        SELECT
-            u.id AS user_id, u.name, u.role,
-            s.base_salary, s.coefficient,
-            p.work_days, p.commission, p.bonus, p.penalty,
-            p.total_salary, p.status
+@router.get("/salaries/payroll/{year}/{month}")
+def get_payroll_data(year: int, month: int, conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_accounting_user)):
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT u.id as user_id, u.name, u.role, 
+               COALESCE(s.base_salary, 0) as base_salary, COALESCE(s.coefficient, 1.0) as coefficient,
+               COALESCE(p.work_days, 0) as work_days, COALESCE(p.commission, 0) as commission,
+               COALESCE(p.bonus, 0) as bonus, COALESCE(p.penalty, 0) as penalty,
+               COALESCE(p.total_salary, 0) as total_salary, COALESCE(p.status, 'draft') as status
         FROM users u
         LEFT JOIN salaries s ON u.id = s.user_id
         LEFT JOIN payrolls p ON u.id = p.user_id AND p.year = ? AND p.month = ?
         WHERE u.role IN ('sale', 'kho', 'ketoan')
         ORDER BY u.name
-        """,
-        (year, month),
-    )
-    rows = []
-    for entry in cursor.fetchall():
-        entry = dict(entry)
-        locked_row = entry.get("status") == ps.PAYROLL_STATUS_LOCKED
-        rows.append(
-            ps.build_payroll_row(
-                cursor,
-                user_id=entry["user_id"],
-                name=entry["name"],
-                role=entry["role"],
-                year=year,
-                month=month,
-                base_salary=entry.get("base_salary"),
-                coefficient=entry.get("coefficient"),
-                stored_work_days=entry.get("work_days"),
-                stored_commission=entry.get("commission"),
-                bonus=entry.get("bonus") or 0,
-                penalty=entry.get("penalty") or 0,
-                status=entry.get("status"),
-                stored_total=entry.get("total_salary"),
-                locked=locked_row,
-            )
-        )
-    return rows
-
-# ================= ENDPOINTS: SALARIES / PAYROLL =================
+    """, (year, month))
+    return [dict(row) for row in cursor.fetchall()]
 
 @router.post("/salaries/setup")
-def setup_salary(
-    salary_data: SalarySetup,
-    conn: sqlite3.Connection = Depends(get_db),
-    current_user: dict = Depends(get_accounting_user),
-):
-    if salary_data.base_salary <= 0 or salary_data.coefficient <= 0:
-        raise HTTPException(status_code=400, detail="Mức lương cơ bản và hệ số phải lớn hơn 0.")
+def setup_salary(data: SalarySetup, conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_accounting_user)):
     cursor = conn.cursor()
-    try:
-        ps.ensure_user_exists(cursor, salary_data.user_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    cursor.execute(
-        "INSERT OR REPLACE INTO salaries (user_id, base_salary, coefficient) VALUES (?, ?, ?)",
-        (salary_data.user_id, salary_data.base_salary, salary_data.coefficient),
-    )
+    cursor.execute("INSERT OR REPLACE INTO salaries (user_id, base_salary, coefficient) VALUES (?, ?, ?)", 
+                   (data.user_id, data.base_salary, data.coefficient))
     conn.commit()
-    return {"message": "Thiết lập lương thành công!", "user_id": salary_data.user_id}
-
-
-@router.get("/salaries/setup/{user_id}")
-def get_salary_setup(
-    user_id: int,
-    conn: sqlite3.Connection = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    _require_payroll_role(current_user, allow_self_user_id=current_user["id"], target_user_id=user_id)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT user_id, base_salary, coefficient FROM salaries WHERE user_id = ?",
-        (user_id,),
-    )
-    row = cursor.fetchone()
-    if row:
-        return dict(row)
-    return {"user_id": user_id, "base_salary": 0, "coefficient": 1.0}
-
+    return {"message": "Thiết lập lương thành công!"}
 
 @router.post("/salaries/timesheet")
-def update_timesheet(
-    timesheet_entry: TimesheetEntry,
-    conn: sqlite3.Connection = Depends(get_db),
-    current_user: dict = Depends(get_accounting_user),
-):
-    if timesheet_entry.hours_worked <= 0 or timesheet_entry.hours_worked > 24:
-        raise HTTPException(status_code=400, detail="Số giờ làm việc phải từ 0 đến 24.")
+def update_timesheet(data: TimesheetEntry, conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_accounting_user)):
     cursor = conn.cursor()
-    try:
-        work_dt = ps.validate_timesheet_date(timesheet_entry.work_date)
-        ps.ensure_user_exists(cursor, timesheet_entry.user_id)
-        ps.assert_payroll_editable(cursor, timesheet_entry.user_id, work_dt.month, work_dt.year)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    cursor.execute(
-        """
-        INSERT INTO timesheets (user_id, work_date, hours_worked) VALUES (?, ?, ?)
-        ON CONFLICT(user_id, work_date) DO UPDATE SET hours_worked = excluded.hours_worked
-        """,
-        (timesheet_entry.user_id, timesheet_entry.work_date, timesheet_entry.hours_worked),
-    )
+    cursor.execute("INSERT OR REPLACE INTO timesheets (user_id, work_date, hours_worked) VALUES (?, ?, ?)",
+                   (data.user_id, data.work_date, data.hours_worked))
+    
+    # DEMO LOGIC: Tổng hợp giờ làm theo tháng và cập nhật ngày công (8 giờ/ngày)
+    year, month = map(int, data.work_date.split('-')[:2])
+    cursor.execute("SELECT COALESCE(SUM(hours_worked), 0) FROM timesheets WHERE user_id = ? AND work_date LIKE ?", 
+                   (data.user_id, f"{year}-{month:02d}-%"))
+    total_hours = cursor.fetchone()[0]
+    work_days = round(total_hours / 8.0, 1)
+    
+    cursor.execute("""
+        INSERT INTO payrolls (user_id, month, year, work_days, status) 
+        VALUES (?, ?, ?, ?, 'draft')
+        ON CONFLICT(user_id, month, year) DO UPDATE SET work_days = excluded.work_days
+    """, (data.user_id, month, year, work_days))
     conn.commit()
-    return {
-        "message": "Chấm công thành công!",
-        "work_days": ps.compute_work_days_from_timesheets(
-            cursor, timesheet_entry.user_id, work_dt.year, work_dt.month
-        ),
-    }
-
-
-@router.get("/salaries/commission/{user_id}/{year}/{month}")
-def get_commission(
-    user_id: int,
-    year: int,
-    month: int,
-    conn: sqlite3.Connection = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    _require_payroll_role(current_user, allow_self_user_id=current_user["id"], target_user_id=user_id)
-    cursor = conn.cursor()
-    cursor.execute("SELECT role FROM users WHERE id = ?", (user_id,))
-    row = cursor.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Không tìm thấy nhân viên.")
-    commission = ps.compute_sale_commission(cursor, user_id, row["role"], year, month)
-    return {"user_id": user_id, "year": year, "month": month, "commission": commission}
-
+    return {"message": "Chấm công thành công!", "work_days": work_days}
 
 @router.post("/salaries/bonus-penalty")
-def add_bonus_penalty(
-    req: BonusPenaltyRequest,
-    conn: sqlite3.Connection = Depends(get_db),
-    current_user: dict = Depends(get_accounting_user),
-):
-    if req.amount == 0:
-        raise HTTPException(status_code=400, detail="Số tiền thưởng/phạt không thể bằng 0.")
+def add_bonus_penalty(req: BonusPenaltyRequest, conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_accounting_user)):
     cursor = conn.cursor()
-    try:
-        ps.ensure_user_exists(cursor, req.user_id)
-        ps.assert_payroll_editable(cursor, req.user_id, req.month, req.year)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    adjustment_type = "bonus" if req.amount > 0 else "penalty"
-    amount_abs = abs(req.amount)
-    try:
-        cursor.execute("BEGIN IMMEDIATE")
+    adj_type = "bonus" if req.amount > 0 else "penalty"
+    abs_amount = abs(req.amount)
+    
+    cursor.execute("INSERT INTO payroll_adjustments (user_id, month, year, amount, adjustment_type, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                   (req.user_id, req.month, req.year, abs_amount, adj_type, req.reason, current_user['id']))
+    
+    if req.amount > 0:
         cursor.execute(
-            """
-            INSERT INTO payroll_adjustments
-            (user_id, month, year, amount, adjustment_type, reason, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (req.user_id, req.month, req.year, amount_abs, adjustment_type, req.reason.strip(), current_user["id"]),
+            "INSERT INTO payrolls (user_id, month, year, bonus) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id, month, year) DO UPDATE SET bonus = bonus + excluded.bonus",
+            (req.user_id, req.month, req.year, abs_amount)
         )
+    else:
         cursor.execute(
-            "SELECT bonus, penalty FROM payrolls WHERE user_id = ? AND month = ? AND year = ?",
-            (req.user_id, req.month, req.year),
+            "INSERT INTO payrolls (user_id, month, year, penalty) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id, month, year) DO UPDATE SET penalty = penalty + excluded.penalty",
+            (req.user_id, req.month, req.year, abs_amount)
         )
-        existing = cursor.fetchone()
-        if existing:
-            if req.amount > 0:
-                cursor.execute(
-                    "UPDATE payrolls SET bonus = bonus + ?, status = COALESCE(status, 'draft') WHERE user_id = ? AND month = ? AND year = ?",
-                    (req.amount, req.user_id, req.month, req.year),
-                )
-            else:
-                cursor.execute(
-                    "UPDATE payrolls SET penalty = penalty + ?, status = COALESCE(status, 'draft') WHERE user_id = ? AND month = ? AND year = ?",
-                    (amount_abs, req.user_id, req.month, req.year),
-                )
-        else:
-            cursor.execute(
-                """
-                INSERT INTO payrolls (user_id, month, year, bonus, penalty, status)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    req.user_id,
-                    req.month,
-                    req.year,
-                    req.amount if req.amount > 0 else 0,
-                    amount_abs if req.amount < 0 else 0,
-                    ps.PAYROLL_STATUS_DRAFT,
-                ),
-            )
-        conn.commit()
-    except sqlite3.Error as exc:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Lỗi lưu thưởng/phạt: {exc}") from exc
-    return {"message": "Thêm thưởng/phạt thành công!", "adjustment_type": adjustment_type}
-
+        
+    conn.commit()
+    return {"message": "Cập nhật thưởng/phạt thành công!"}
 
 @router.post("/salaries/finalize/{year}/{month}")
-def finalize_payroll(
-    year: int,
-    month: int,
-    conn: sqlite3.Connection = Depends(get_db),
-    current_user: dict = Depends(get_accounting_user),
-):
-    if month < 1 or month > 12:
-        raise HTTPException(status_code=400, detail="Tháng không hợp lệ.")
+def finalize_payroll(year: int, month: int, conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_accounting_user)):
     cursor = conn.cursor()
-    if ps.is_period_locked(cursor, year, month):
-        raise HTTPException(status_code=400, detail=f"Kỳ lương {month}/{year} đã được chốt.")
-
-    cursor.execute("SELECT id, role, name FROM users WHERE role IN ('sale', 'kho', 'ketoan')")
+    
+    # Check if already locked
+    cursor.execute("SELECT status FROM payroll_periods WHERE year = ? AND month = ?", (year, month))
+    period = cursor.fetchone()
+    if period and period['status'] == 'locked':
+        raise HTTPException(status_code=400, detail="Kỳ lương này đã bị chốt!")
+        
+    cursor.execute("""
+        SELECT u.id as user_id, COALESCE(s.base_salary, 0) as base_salary, COALESCE(s.coefficient, 1.0) as coefficient, 
+               COALESCE(p.work_days, 0) as work_days, COALESCE(p.bonus, 0) as bonus, COALESCE(p.penalty, 0) as penalty, 
+               COALESCE(p.commission, 0) as commission 
+        FROM users u 
+        LEFT JOIN salaries s ON u.id = s.user_id 
+        LEFT JOIN payrolls p ON u.id = p.user_id AND p.year = ? AND p.month = ? 
+        WHERE u.role IN ('sale', 'kho', 'ketoan')
+    """, (year, month))
     employees = cursor.fetchall()
-    if not employees:
-        raise HTTPException(status_code=404, detail="Không có nhân viên nào để chốt bảng lương.")
-
-    try:
-        cursor.execute("BEGIN IMMEDIATE")
-        for employee in employees:
-            user_id = employee["id"]
-            user_role = employee["role"]
-            cursor.execute(
-                "SELECT base_salary, coefficient FROM salaries WHERE user_id = ?",
-                (user_id,),
-            )
-            salary_setup = cursor.fetchone()
-            base_salary = int(salary_setup["base_salary"]) if salary_setup else 0
-            coefficient = float(salary_setup["coefficient"]) if salary_setup else 1.0
-
-            cursor.execute(
-                "SELECT bonus, penalty, work_days FROM payrolls WHERE user_id = ? AND month = ? AND year = ?",
-                (user_id, month, year),
-            )
-            existing_bp = cursor.fetchone()
-            bonus = int(existing_bp["bonus"]) if existing_bp and existing_bp["bonus"] else 0
-            penalty = int(existing_bp["penalty"]) if existing_bp and existing_bp["penalty"] else 0
-            fallback_days = float(existing_bp["work_days"]) if existing_bp and existing_bp["work_days"] else 0.0
-
-            work_days = ps.compute_work_days_from_timesheets(
-                cursor, user_id, year, month, fallback=fallback_days
-            )
-            commission = ps.compute_sale_commission(cursor, user_id, user_role, year, month)
-            total_salary = ps.calculate_total_salary(
-                base_salary, coefficient, work_days, commission, bonus, penalty
-            )
-            cursor.execute(
-                """
-                INSERT INTO payrolls
-                (user_id, month, year, base_salary, work_days, commission, bonus, penalty, total_salary, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(user_id, month, year) DO UPDATE SET
-                    base_salary = excluded.base_salary,
-                    work_days = excluded.work_days,
-                    commission = excluded.commission,
-                    bonus = excluded.bonus,
-                    penalty = excluded.penalty,
-                    total_salary = excluded.total_salary,
-                    status = excluded.status
-                """,
-                (
-                    user_id,
-                    month,
-                    year,
-                    base_salary,
-                    work_days,
-                    commission,
-                    bonus,
-                    penalty,
-                    total_salary,
-                    ps.PAYROLL_STATUS_LOCKED,
-                ),
-            )
+    
+    for emp in employees:
+        # DEMO LOGIC: Tính lương cơ bản dựa trên chuẩn 26 ngày công/tháng, làm tròn số tiền.
+        gross = (emp['base_salary'] * emp['coefficient'] / 26.0) * emp['work_days']
+        total = int(round(gross + emp['commission'] + emp['bonus'] - emp['penalty']))
+        total = max(0, total) # Không để lương âm
+        
         cursor.execute(
-            """
-            INSERT INTO payroll_periods (year, month, status, locked_at, locked_by)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
-            ON CONFLICT(year, month) DO UPDATE SET
-                status = excluded.status,
-                locked_at = CURRENT_TIMESTAMP,
-                locked_by = excluded.locked_by
-            """,
-            (year, month, ps.PAYROLL_STATUS_LOCKED, current_user["id"]),
+            "INSERT INTO payrolls (user_id, month, year, total_salary, status, base_salary, work_days, commission, bonus, penalty) "
+            "VALUES (?, ?, ?, ?, 'locked', ?, ?, ?, ?, ?) "
+            "ON CONFLICT(user_id, month, year) DO UPDATE SET total_salary = excluded.total_salary, status = 'locked', base_salary = excluded.base_salary",
+            (emp['user_id'], month, year, total, emp['base_salary'], emp['work_days'], emp['commission'], emp['bonus'], emp['penalty'])
         )
-        conn.commit()
-    except sqlite3.Error as exc:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Lỗi chốt bảng lương: {exc}") from exc
-
-    return {
-        "message": f"Đã chốt bảng lương thành công cho kỳ {month}/{year}.",
-        "employee_count": len(employees),
-        "status": ps.PAYROLL_STATUS_LOCKED,
-    }
-
-
-@router.get("/salaries/payroll/{year}/{month}")
-def get_payroll_data(
-    year: int,
-    month: int,
-    conn: sqlite3.Connection = Depends(get_db),
-    current_user: dict = Depends(get_accounting_user),
-):
-    cursor = conn.cursor()
-    return _fetch_payroll_rows(cursor, year, month)
-
-
-@router.get("/salaries/payroll/{year}/{month}/summary")
-def get_payroll_summary(
-    year: int,
-    month: int,
-    conn: sqlite3.Connection = Depends(get_db),
-    current_user: dict = Depends(get_accounting_user),
-):
-    rows = _fetch_payroll_rows(conn.cursor(), year, month)
-    total_payout = sum(r["total_salary"] for r in rows)
-    return {
-        "year": year,
-        "month": month,
-        "employee_count": len(rows),
-        "total_payout": total_payout,
-        "total_bonus": sum(r["bonus"] for r in rows),
-        "total_penalty": sum(r["penalty"] for r in rows),
-        "total_commission": sum(r["commission"] for r in rows),
-        "period_locked": ps.is_period_locked(conn.cursor(), year, month),
-        "rows": rows,
-    }
-
-
-@router.get("/salaries/payroll/{year}/{month}/employee/{user_id}")
-def get_employee_payroll(
-    year: int,
-    month: int,
-    user_id: int,
-    conn: sqlite3.Connection = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    _require_payroll_role(current_user, allow_self_user_id=current_user["id"], target_user_id=user_id)
-    rows = _fetch_payroll_rows(conn.cursor(), year, month)
-    match = next((r for r in rows if r["user_id"] == user_id), None)
-    if not match:
-        raise HTTPException(status_code=404, detail="Không tìm thấy bản ghi lương cho nhân viên này.")
-    return match
-
-
-@router.get("/salaries/payroll/history/{user_id}")
-def get_payroll_history(
-    user_id: int,
-    conn: sqlite3.Connection = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    _require_payroll_role(current_user, allow_self_user_id=current_user["id"], target_user_id=user_id)
-    cursor = conn.cursor()
+        
     cursor.execute(
-        """
-        SELECT year, month, base_salary, work_days, commission, bonus, penalty, total_salary, status
-        FROM payrolls WHERE user_id = ? ORDER BY year DESC, month DESC
-        """,
-        (user_id,),
+        "INSERT OR REPLACE INTO payroll_periods (year, month, status, locked_at, locked_by) VALUES (?, ?, 'locked', CURRENT_TIMESTAMP, ?)", 
+        (year, month, current_user['id'])
     )
-    return [dict(row) for row in cursor.fetchall()]
-
-
-@router.get("/salaries/adjustments/{year}/{month}")
-def list_payroll_adjustments(
-    year: int,
-    month: int,
-    user_id: Optional[int] = None,
-    conn: sqlite3.Connection = Depends(get_db),
-    current_user: dict = Depends(get_accounting_user),
-):
-    cursor = conn.cursor()
-    query = """
-        SELECT a.id, a.user_id, u.name, a.amount, a.adjustment_type, a.reason, a.created_at, a.created_by
-        FROM payroll_adjustments a
-        JOIN users u ON u.id = a.user_id
-        WHERE a.year = ? AND a.month = ?
-    """
-    params: list = [year, month]
-    if user_id is not None:
-        query += " AND a.user_id = ?"
-        params.append(user_id)
-    query += " ORDER BY a.created_at DESC"
-    cursor.execute(query, params)
-    return [dict(row) for row in cursor.fetchall()]
-
+    conn.commit()
+    return {"message": "Chốt bảng lương thành công!"}
 
 @router.get("/salaries/export")
-def export_payroll_report(
-    year: int,
-    month: int,
-    conn: sqlite3.Connection = Depends(get_db),
-    current_user: dict = Depends(get_accounting_user),
-):
-    rows = _fetch_payroll_rows(conn.cursor(), year, month)
+def export_payroll_report(year: int, month: int, conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_accounting_user)):
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT u.name, u.role, COALESCE(p.work_days, 0) as work_days, COALESCE(s.base_salary, 0) as base_salary, COALESCE(s.coefficient, 1.0) as coefficient, 
+               COALESCE(p.commission, 0) as commission, COALESCE(p.bonus, 0) as bonus, COALESCE(p.penalty, 0) as penalty, COALESCE(p.total_salary, 0) as total_salary, COALESCE(p.status, 'draft') as status 
+        FROM users u 
+        LEFT JOIN payrolls p ON u.id = p.user_id AND p.year = ? AND p.month = ? 
+        LEFT JOIN salaries s ON u.id = s.user_id 
+        WHERE u.role IN ('sale', 'kho', 'ketoan')
+    """, (year, month))
+    rows = cursor.fetchall()
+    
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(
-        [
-            "user_id",
-            "name",
-            "role",
-            "work_days",
-            "base_salary",
-            "coefficient",
-            "commission",
-            "bonus",
-            "penalty",
-            "total_salary",
-            "status",
-        ]
-    )
+    writer.writerow(["Tên nhân viên", "Vai trò", "Ngày công", "Lương CB", "Hệ số", "Hoa hồng", "Thưởng", "Phạt", "Tổng lương", "Trạng thái"])
     for row in rows:
-        writer.writerow(
-            [
-                row["user_id"],
-                row["name"],
-                row["role"],
-                row["work_days"],
-                row["base_salary"],
-                row["coefficient"],
-                row["commission"],
-                row["bonus"],
-                row["penalty"],
-                row["total_salary"],
-                row["status"],
-            ]
-        )
-    filename = f"payroll_{year}_{month:02d}.csv"
-    return PlainTextResponse(
-        content=buffer.getvalue(),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+        writer.writerow([row['name'], row['role'], row['work_days'], row['base_salary'], row['coefficient'], row['commission'], row['bonus'], row['penalty'], row['total_salary'], row['status']])
+        
+    return PlainTextResponse(content=buffer.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="payroll_{year}_{month}.csv"'})

@@ -150,12 +150,13 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS feedback (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_id INTEGER,
-            user_id INTEGER,
+            product_id INTEGER NOT NULL,
+            customer_name TEXT NOT NULL,
             rating INTEGER NOT NULL,
             comment TEXT,
             status TEXT DEFAULT 'pending', -- pending, processed, hidden
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(product_id) REFERENCES products(id)
         )
     """)
     cursor.execute("""
@@ -331,11 +332,11 @@ def init_db():
     cursor.execute("SELECT COUNT(*) FROM feedback")
     if cursor.fetchone()[0] == 0:
         feedback_data = [
-            (1, 1, 5, "Sản phẩm rất tốt, giao hàng nhanh!", "pending"),
-            (1, 2, 3, "Chất lượng ổn, nhưng giao hàng hơi lâu.", "pending"),
-            (2, 1, 1, "Hàng bị lỗi, yêu cầu đổi trả.", "pending"),
+            (1, "Nguyễn Văn A", 5, "Sản phẩm rất tốt, giao hàng nhanh!", "pending"),
+            (1, "Trần Thị B", 3, "Chất lượng ổn, nhưng giao hàng hơi lâu.", "pending"),
+            (2, "Lê Hữu C", 1, "Hàng bị lỗi, yêu cầu đổi trả.", "pending"),
         ]
-        cursor.executemany("INSERT INTO feedback (product_id, user_id, rating, comment, status) VALUES (?, ?, ?, ?, ?)", feedback_data)
+        cursor.executemany("INSERT INTO feedback (product_id, customer_name, rating, comment, status) VALUES (?, ?, ?, ?, ?)", feedback_data)
 
     # Tự động thêm dữ liệu mẫu cho Hàng hoàn một cách an toàn
     cursor.execute("SELECT COUNT(*) FROM warehouse_slips WHERE type = 'return'")

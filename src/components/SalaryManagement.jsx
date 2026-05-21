@@ -53,7 +53,11 @@ const SalaryManagement = ({ onBack }) => {
       const response = await fetch(`/api/salaries/payroll/${year}/${month}`, { headers });
       if (!response.ok) {
           const errData = await response.json();
-          throw new Error(errData.detail || `Lỗi khi tải bảng lương: ${response.statusText}`);
+          let errMsg = errData.detail || `Lỗi khi tải bảng lương: ${response.statusText}`;
+          if (Array.isArray(errData.detail)) {
+              errMsg = errData.detail.map(err => `Trường [${err.loc[err.loc.length - 1]}]: ${err.msg}`).join('\n');
+          }
+          throw new Error(errMsg);
       }
       const data = await response.json();
       setPayrollData(data);
@@ -101,7 +105,13 @@ const SalaryManagement = ({ onBack }) => {
       }
       const response = await fetch(endpoint, config);
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Thao tác thất bại.');
+      if (!response.ok) {
+        if (Array.isArray(data.detail)) {
+          const errorMessages = data.detail.map(err => `Trường [${err.loc[err.loc.length - 1]}]: ${err.msg}`).join('\n');
+          throw new Error(`Dữ liệu không hợp lệ:\n${errorMessages}`);
+        }
+        throw new Error(data.detail || 'Thao tác thất bại.');
+      }
       alert(successMessage);
       // Tự động làm mới dữ liệu sau khi thành công
       const year = currentDate.getFullYear();

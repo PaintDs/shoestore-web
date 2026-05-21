@@ -1,8 +1,9 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import PlainTextResponse
 import sqlite3
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic.alias_generators import to_camel
 from datetime import datetime, timezone
 import calendar
 import csv
@@ -34,13 +35,42 @@ class PeriodLockRequest(BaseModel):
 class PromotionCreate(BaseModel):
     name: str
     code: str
-    discount_type: str # 'percentage' hoáº·c 'fixed'
+    discount_type: str = "percentage" # Fallback bảo vệ khi Frontend thiếu
     discount_value: float
-    max_discount_amount: Optional[int] = None # Báº¯t buá»™c náº¿u type lÃ  'percentage'
+    max_discount_amount: Optional[int] = None
     min_order_value: int = 0
-    usage_limit: int
-    start_date: str # Sá»­a thÃ nh string Ä‘á»ƒ nháº­n Ä‘á»‹nh dáº¡ng tá»« client
-    end_date: str   # Sá»­a thÃ nh string Ä‘á»ƒ nháº­n Ä‘á»‹nh dáº¡ng tá»« client
+    usage_limit: int = 1000 # Giá trị an toàn mặc định
+    start_date: datetime
+    end_date: datetime
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        from_attributes=True
+    )
+    @model_validator(mode='before')
+    @classmethod
+    def clean_frontend_payload(cls, data: any) -> any:
+        if isinstance(data, dict):
+            # Tự động map loại giảm giá nếu Frontend gửi lên bị thiếu
+            if 'discountType' not in data and 'discount_type' not in data:
+                data['discountType'] = 'percentage'
+            
+            # Xử lý dứt điểm chuỗi ngày tháng tiếng Việt "21/05/2026 04:56 SA"
+            def parse_vn_date(val):
+                if isinstance(val, str) and ('SA' in val or 'CH' in val):
+                    try:
+                        val_en = val.replace(' SA', ' AM').replace(' CH', ' PM')
+                        return datetime.strptime(val_en, '%d/%m/%Y %I:%M %p')
+                    except ValueError:
+                        pass
+                return val
+
+            for key in ['startDate', 'start_date', 'endDate', 'end_date']:
+                if key in data:
+                    data[key] = parse_vn_date(data[key])
+                    
+        return data
 
 # ================= ENDPOINTS: ACCOUNTING =================
 
@@ -278,38 +308,29 @@ def export_manager_report(
 @router.post("/promotions")
 def create_promotion(promo: PromotionCreate, conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_current_user)):
     if current_user["role"] not in ["admin"]:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Báº¡n khÃ´ng cÃ³ quyá»n táº¡o khuyáº¿n mÃ£i.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bạn không có quyền tạo khuyến mãi.")
 
-    # BÆ¯á»šC 2: Sá»¬A LOGIC PARSE DATETIME TRONG API ROUTER
-    try:
-        # Chuáº©n hÃ³a SA/CH vÃ  parse chuá»—i ngÃ y thÃ¡ng tá»« client
-        start_date_str = promo.start_date.replace(' SA', ' AM').replace(' CH', ' PM')
-        end_date_str = promo.end_date.replace(' SA', ' AM').replace(' CH', ' PM')
-        
-        # Sá»­ dá»¥ng strptime Ä‘á»ƒ parse vÃ  gÃ¡n mÃºi giá» UTC
-        start_date_obj = datetime.strptime(start_date_str, '%d/%m/%Y %I:%M %p').replace(tzinfo=timezone.utc)
-        end_date_obj = datetime.strptime(end_date_str, '%d/%m/%Y %I:%M %p').replace(tzinfo=timezone.utc)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Äá»‹nh dáº¡ng ngÃ y thÃ¡ng khÃ´ng há»£p lá»‡. Vui lÃ²ng sá»­ dá»¥ng Ä‘á»‹nh dáº¡ng DD/MM/YYYY HH:MM SA/CH.")
+    start_date_obj = promo.start_date
+    end_date_obj = promo.end_date
 
-    # CHá»ˆ THá»Š 1.1: Kiá»ƒm tra ngÃ y (sá»­ dá»¥ng object Ä‘Ã£ parse)
+    # CHỈ THỊ 1.1: Kiểm tra ngày
     if end_date_obj <= start_date_obj:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="NgÃ y káº¿t thÃºc pháº£i lá»›n hÆ¡n ngÃ y báº¯t Ä‘áº§u.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ngày kết thúc phải lớn hơn ngày bắt đầu.")
 
-    # CHá»ˆ THá»Š 1.2: RÃ ng buá»™c Ä‘á»‹nh má»©c (MÃ£ TC_PROMO_01)
+    # CHỈ THỊ 1.2: Ràng buộc định mức (Mã TC_PROMO_01)
     if promo.discount_type not in ['percentage', 'fixed']:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Loáº¡i giáº£m giÃ¡ chá»‰ cÃ³ thá»ƒ lÃ  'percentage' hoáº·c 'fixed'.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Loại giảm giá chỉ có thể là 'percentage' hoặc 'fixed'.")
     
     if promo.discount_type == 'percentage':
         if not (0 < promo.discount_value <= 100):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Vá»›i loáº¡i 'percentage', giÃ¡ trá»‹ giáº£m pháº£i lá»›n hÆ¡n 0 vÃ  nhá» hÆ¡n hoáº·c báº±ng 100.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Với loại 'percentage', giá trị giảm phải lớn hơn 0 và nhỏ hơn hoặc bằng 100.")
         if promo.max_discount_amount is None or promo.max_discount_amount <= 0:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Vá»›i loáº¡i 'percentage', báº¯t buá»™c pháº£i cÃ³ 'max_discount_amount' (sá»‘ tiá»n giáº£m tá»‘i Ä‘a) vÃ  pháº£i lá»›n hÆ¡n 0.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Với loại 'percentage', bắt buộc phải có 'max_discount_amount' (số tiền giảm tối đa) và phải lớn hơn 0.")
     
     if promo.discount_type == 'fixed':
         if promo.discount_value <= 0:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Vá»›i loáº¡i 'fixed', giÃ¡ trá»‹ giáº£m pháº£i lá»›n hÆ¡n 0.")
-        promo.max_discount_amount = None # KhÃ´ng Ã¡p dá»¥ng cho loáº¡i fixed
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Với loại 'fixed', giá trị giảm phải lớn hơn 0.")
+        promo.max_discount_amount = None # Không áp dụng cho loại fixed
 
     cursor = conn.cursor()
     try:
@@ -327,6 +348,6 @@ def create_promotion(promo: PromotionCreate, conn: sqlite3.Connection = Depends(
         )
         conn.commit()
     except sqlite3.IntegrityError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"MÃ£ khuyáº¿n mÃ£i '{promo.code.upper()}' Ä‘Ã£ tá»“n táº¡i.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Mã khuyến mãi '{promo.code.upper()}' đã tồn tại.")
 
-    return {"message": "Táº¡o mÃ£ giáº£m giÃ¡ thÃ nh cÃ´ng!", "id": cursor.lastrowid}
+    return {"message": "Tạo mã giảm giá thành công!", "id": cursor.lastrowid}
