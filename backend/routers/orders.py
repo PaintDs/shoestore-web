@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 import sqlite3
 import random
 import re
+import urllib.request
+import json
 from typing import Optional, List
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from pydantic.alias_generators import to_camel
@@ -301,7 +303,33 @@ def process_checkout(req: CheckoutRequest, conn: sqlite3.Connection = Depends(ge
         return {"message": "Đặt hàng thành công với COD!", "order_id": order_id, "final_amount": final_amount}
     elif req.payment_method == "Online":
         return {"message": "Chuyển hướng đến cổng thanh toán...", "payment_url": "https://mock-vnpay-momo.com/pay", "order_id": order_id, "final_amount": final_amount}
-    raise HTTPException(status_code=400, detail="Phương thức thanh toán không hợp lệ.")
+    elif req.payment_method == "vietqr":
+        # Đóng gói gọi sang API VietQR
+        vietqr_url = "https://api.vietqr.io/v2/generate"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "accountNo": "1430197425",
+            "accountName": "NGUYEN VAN KHAI",
+            "acqId": "970422",
+            "amount": int(final_amount),
+            "addInfo": f"SHOESTORE {order_id}",
+            "template": "qr_only"
+        }
+        try:
+            req_obj = urllib.request.Request(vietqr_url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
+            with urllib.request.urlopen(req_obj) as response:
+                res_data = json.loads(response.read().decode('utf-8'))
+                qr_data_url = res_data.get("data", {}).get("qrDataURL", "")
+            return {
+                "message": "Khởi tạo mã VietQR thành công!",
+                "order_id": order_id,
+                "final_amount": final_amount,
+                "qr_code_url": qr_data_url
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Lỗi kết nối cổng VietQR: {str(e)}")
+    else:
+        raise HTTPException(status_code=400, detail="Phương thức thanh toán không hợp lệ.")
 
 @router.get("/orders")
 def get_orders(conn: sqlite3.Connection = Depends(get_db), status: Optional[str] = None):

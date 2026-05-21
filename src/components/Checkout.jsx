@@ -7,6 +7,9 @@ const Checkout = ({ onBack, cartItems, onCheckoutSuccess, currentUser }) => {
     phone: '',
     address: ''
   });
+  const [showVietQRModal, setShowVietQRModal] = useState(false);
+  const [qrCodeUrl, setQrCodeUrl] = useState('');
+  const [vietqrOrderId, setVietqrOrderId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('COD');
   const [voucherCode, setVoucherCode] = useState('');
   const [discount, setDiscount] = useState(0);
@@ -94,17 +97,25 @@ const Checkout = ({ onBack, cartItems, onCheckoutSuccess, currentUser }) => {
       const data = await response.json();
 
       if (!response.ok) {
-        // Ném lỗi để khối catch bên dưới xử lý tập trung
         const error = new Error(data.detail || "Lỗi từ server");
         error.response = { data }; // Gắn kèm data để catch có thể đọc
         throw error;
       }
 
-      if (paymentMethod === 'Online' && data.payment_url) {
-        window.open(data.payment_url, '_blank');
+      // --- CHIA NHÁNH XỬ LÝ THEO PHƯƠG THỨC THANH TOÁN CHUẨN ---
+      if (paymentMethod === 'vietqr') {
+        if (data.qr_code_url) {
+          setQrCodeUrl(data.qr_code_url);
+          setVietqrOrderId(data.order_id);
+          setShowVietQRModal(true); // Chỉ bật Modal, DỪNG LUỒNG tại đây cho khách quét mã
+        } else {
+          alert("Lỗi: Backend không trả về link ảnh QR.");
+        }
+      } else if (paymentMethod === 'COD') {
+        // Khách dùng COD thì mới cho chuyển hướng dọn giỏ hàng ngay
+        alert(data.message || "🎉 Đặt hàng thành công! Đơn hàng của bạn đang chờ xác nhận.");
+        onCheckoutSuccess();
       }
-      alert(data.message || "🎉 Đặt hàng thành công! Đơn hàng của bạn đang chờ xác nhận.");
-      onCheckoutSuccess();
     } catch (error) {
         console.error("CHI TIẾT LỖI CHECKOUT:", error.response?.data);
         setError(error.message); // Cập nhật state lỗi để hiển thị trên UI nếu cần
@@ -150,8 +161,8 @@ const Checkout = ({ onBack, cartItems, onCheckoutSuccess, currentUser }) => {
                   <span className="ml-3 font-bold text-blue-900">Thanh toán khi nhận hàng (COD)</span>
                 </label>
                 <label className="flex items-center p-4 border border-gray-200 hover:bg-gray-50 rounded-xl cursor-pointer transition-colors">
-                  <input type="radio" name="payment" value="Online" checked={paymentMethod === 'Online'} onChange={(e) => setPaymentMethod(e.target.value)} className="w-4 h-4 text-blue-600 focus:ring-blue-500" />
-                  <span className="ml-3 font-medium text-gray-700">Chuyển khoản / Ví điện tử</span>
+                  <input type="radio" name="payment" value="vietqr" checked={paymentMethod === 'vietqr'} onChange={(e) => setPaymentMethod(e.target.value)} className="w-4 h-4 text-blue-600 focus:ring-blue-500" />
+                  <span className="ml-3 font-medium text-gray-700">Thanh toán quét mã VietQR (Tự động)</span>
                 </label>
               </div>
             </div>
@@ -192,6 +203,30 @@ const Checkout = ({ onBack, cartItems, onCheckoutSuccess, currentUser }) => {
           </div>
         </form>
       </div>
+      {showVietQRModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl text-center">
+            <h2 className="text-xl font-bold mb-6">Quét mã VietQR để thanh toán</h2>
+            {qrCodeUrl ? (
+              <img src={qrCodeUrl} alt="Mã QR VietQR" className="w-64 h-64 mx-auto mb-4 border border-gray-200 rounded-lg p-2" />
+            ) : (
+              <div className="text-red-500 mb-4">Không thể tạo mã QR. Vui lòng thử lại.</div>
+            )}
+            <p className="text-gray-700 font-medium mb-6">Nội dung CK: <span className="font-bold text-blue-600">SHOESTORE {vietqrOrderId}</span></p>
+            <button
+              onClick={() => {
+                setShowVietQRModal(false);
+                setQrCodeUrl('');
+                setVietqrOrderId('');
+                onCheckoutSuccess(); // Chuyển hướng về trang chủ hoặc trang xác nhận
+              }}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-200 transition-all"
+            >
+              Tôi đã chuyển khoản thành công
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
