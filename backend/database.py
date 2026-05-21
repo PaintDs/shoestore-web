@@ -257,19 +257,33 @@ def init_db():
 
     _migrate_payroll_schema(cursor)
 
-    # Khởi tạo dữ liệu Test nếu DB trống
-    cursor.execute("SELECT COUNT(*) FROM users")
-    if cursor.fetchone()[0] == 0:
-        hashed_default_pwd = pwd_context.hash("123456")
-        # NHIỆM VỤ 1.1: Chèn 3 nhân viên mẫu và các vai trò khác
-        users_data = [
-            (1, "Nguyễn Văn Khải", "admin@shoestore.vn", hashed_default_pwd, "admin"),
-            (2, "Trần Thị Sale", "sale@shoestore.vn", hashed_default_pwd, "sale"),
-            (3, "Lê Văn Kho", "kho@shoestore.vn", hashed_default_pwd, "kho"),
-            (4, "Kế Toán Viên", "ketoan@shoestore.vn", hashed_default_pwd, "ketoan"),
-            (5, "IT Admin", "it@shoestore.vn", hashed_default_pwd, "it")
-        ]
-        cursor.executemany("INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)", users_data)
+    # Khởi tạo/Khôi phục các tài khoản nhân viên thiết yếu (Idempotent Seeding)
+    hashed_default_pwd = pwd_context.hash("123456")
+    essential_users = [
+        {"name": "Nguyễn Văn Khải", "email": "admin@shoestore.vn", "role": "admin"},
+        {"name": "Trần Thị Sale", "email": "sale@shoestore.vn", "role": "sale"},
+        {"name": "Lê Văn Kho", "email": "kho@shoestore.vn", "role": "kho"},
+        {"name": "Kế Toán Viên", "email": "ketoan@shoestore.vn", "role": "ketoan"},
+        {"name": "IT Admin", "email": "it@shoestore.vn", "role": "it"}
+    ]
+    for user_data in essential_users:
+        cursor.execute("SELECT id, role FROM users WHERE email = ?", (user_data["email"],))
+        user_record = cursor.fetchone()
+        
+        if user_record is None:
+            # Nếu chưa có thì chèn mới
+            cursor.execute(
+                "INSERT INTO users (name, email, password, role, status) VALUES (?, ?, ?, ?, 'active')",
+                (user_data["name"], user_data["email"], hashed_default_pwd, user_data["role"])
+            )
+        else:
+            # Nếu đã có nhưng sai role (ví dụ bị kẹt ở 'custom'), phải ép cập nhật lại role chuẩn!
+            user_id, current_role = user_record
+            if current_role != user_data["role"]:
+                cursor.execute(
+                    "UPDATE users SET role = ?, status = 'active' WHERE id = ?",
+                    (user_data["role"], user_id)
+                )
 
     # NHIỆM VỤ 1.2: Chèn cấu hình lương mặc định
     cursor.execute("SELECT COUNT(*) FROM salaries")

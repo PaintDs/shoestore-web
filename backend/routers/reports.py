@@ -3,7 +3,7 @@ import sqlite3
 from typing import Optional
 
 from database import get_db
-from .auth import get_current_user
+from .auth import get_current_user, get_it_user
 
 router = APIRouter(
     prefix="/api/reports",
@@ -68,3 +68,11 @@ def get_top_products(
     cursor.execute(query, (limit,))
     top_products = [dict(row) for row in cursor.fetchall()]
     return top_products
+
+@router.get("/backups")
+def get_system_backups(conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_it_user)):
+    """Endpoint để IT xem lịch sử backup hệ thống."""
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM system_backups ORDER BY created_at DESC")
+    backups = [dict(row) for row in cursor.fetchall()]
+    return backups

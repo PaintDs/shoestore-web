@@ -50,6 +50,9 @@ class ResetPasswordReq(BaseModel):
     otp: str
     new_password: str
 
+class RoleUpdate(BaseModel):
+    role: str
+
 class Token(BaseModel):
     access_token: str
     token_type: str
@@ -196,6 +199,17 @@ def get_all_users(conn: sqlite3.Connection = Depends(get_db), user: dict = Depen
     cursor.execute("SELECT id, name, email, role, status FROM users WHERE role != 'customer'")
 
     return [dict(row) for row in cursor.fetchall()]
+
+@router.put("/users/{user_id}/role")
+def update_user_role(user_id: int, payload: RoleUpdate, conn: sqlite3.Connection = Depends(get_db), current_user: dict = Depends(get_it_user)):
+    new_role = payload.role
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET role = ? WHERE id = ?", (new_role, user_id))
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
+    conn.commit()
+    return {"status": "success", "message": f"Đã cập nhật vai trò thành {new_role}"}
+
 
 @router.post("/forgot-password")
 def forgot_password(req: ForgotPasswordReq, conn: sqlite3.Connection = Depends(get_db)):
