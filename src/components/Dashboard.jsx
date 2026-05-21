@@ -8,44 +8,67 @@ const Dashboard = ({ onBack }) => {
   const [totalOrders, setTotalOrders] = useState(0);
   const [newCustomers, setNewCustomers] = useState(0); // Placeholder for now
   const [topProducts, setTopProducts] = useState([]);
+  const [filterType, setFilterType] = useState('all');
+  const [filterValue, setFilterValue] = useState('');
+
+  const getDefaultDateValue = (type) => {
+    const d = new Date();
+    if (type === 'day') return d.toISOString().split('T')[0];
+    if (type === 'month') return d.toISOString().slice(0, 7);
+    if (type === 'year') return d.getFullYear().toString();
+    return '';
+  };
+
+  useEffect(() => {
+    setFilterValue(getDefaultDateValue(filterType));
+  }, [filterType]);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
+      if (filterType !== 'all' && !filterValue) {
+        return;
+      }
       setLoading(true);
       setError(null);
       try {
-        // Lấy token từ localStorage hoặc sessionStorage
         const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
         if (!token) {
           setError("Không tìm thấy token. Vui lòng đăng nhập lại.");
           setLoading(false);
           return;
         }
-
         const headers = {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         };
 
+        const params = new URLSearchParams();
+        params.append('filter_type', filterType);
+        if (filterType !== 'all' && filterValue) {
+          params.append('filter_value', filterValue);
+        }
+
         // Fetch Performance Report
-        const performanceRes = await fetch('/api/reports/performance?report_type=monthly', { headers });
+        const performanceRes = await fetch(`/api/reports/performance?${params.toString()}`, { headers });
         if (!performanceRes.ok) {
           throw new Error(`Lỗi khi lấy báo cáo hiệu suất: ${performanceRes.statusText}`);
         }
         const performanceData = await performanceRes.json();
         setTotalRevenue(performanceData.total_revenue);
         setTotalOrders(performanceData.total_orders);
-        // Giả lập số khách hàng mới vì Backend chưa có API cụ thể
         setNewCustomers(performanceData.new_customers ?? 0);
 
         // Fetch Top Products Report
-        const topProductsRes = await fetch('/api/reports/top-products?limit=5&sort_by=quantity', { headers });
+        const topProductsParams = new URLSearchParams(params);
+        topProductsParams.append('limit', '5');
+        topProductsParams.append('sort_by', 'quantity');
+
+        const topProductsRes = await fetch(`/api/reports/top-products?${topProductsParams.toString()}`, { headers });
         if (!topProductsRes.ok) {
           throw new Error(`Lỗi khi lấy top sản phẩm: ${topProductsRes.statusText}`);
         }
         const topProductsData = await topProductsRes.json();
         setTopProducts(topProductsData);
-
       } catch (err) {
         console.error("Lỗi Dashboard:", err);
         setError(err.message || "Không thể tải dữ liệu Dashboard.");
@@ -55,7 +78,7 @@ const Dashboard = ({ onBack }) => {
     };
 
     fetchDashboardData();
-  }, []);
+  }, [filterType, filterValue]);
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
@@ -71,6 +94,25 @@ const Dashboard = ({ onBack }) => {
       </header>
 
       <main className="flex-1 p-6 max-w-7xl mx-auto w-full">
+        <div className="bg-white rounded-2xl shadow-sm p-4 mb-6 border border-gray-100 flex items-center gap-4 flex-wrap">
+          <label className="font-bold text-gray-700 text-sm">Lọc theo:</label>
+          <select value={filterType} onChange={e => setFilterType(e.target.value)} className="border border-gray-300 p-2 rounded-lg text-sm focus:ring-blue-500 focus:border-blue-500">
+            <option value="all">Toàn thời gian</option>
+            <option value="day">Theo Ngày</option>
+            <option value="month">Theo Tháng</option>
+            <option value="year">Theo Năm</option>
+          </select>
+          {filterType === 'day' && (
+            <input type="date" value={filterValue} onChange={e => setFilterValue(e.target.value)} className="border border-gray-300 p-2 rounded-lg text-sm focus:ring-blue-500 focus:border-blue-500" />
+          )}
+          {filterType === 'month' && (
+            <input type="month" value={filterValue} onChange={e => setFilterValue(e.target.value)} className="border border-gray-300 p-2 rounded-lg text-sm focus:ring-blue-500 focus:border-blue-500" />
+          )}
+          {filterType === 'year' && (
+            <input type="number" placeholder="YYYY" value={filterValue} onChange={e => setFilterValue(e.target.value)} className="border border-gray-300 p-2 rounded-lg w-28 text-sm focus:ring-blue-500 focus:border-blue-500" />
+          )}
+        </div>
+
         {loading && (
           <div className="text-center py-10 text-gray-600">Đang tải dữ liệu...</div>
         )}
