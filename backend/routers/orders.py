@@ -46,6 +46,7 @@ class CheckoutRequest(BaseModel):
     payment_method: str
     cart_items: List[CheckoutItem]
     voucher_code: Optional[str] = None
+    shipping_fee: int = 0  # Phí vận chuyển (đơn vị: VNĐ), mặc định 0
 
     model_config = ConfigDict(
         alias_generator=to_camel,
@@ -87,6 +88,7 @@ class SaleOrderCreate(BaseModel):
 
 class OrderStatusUpdate(BaseModel):
     status: str
+    reason: Optional[str] = None
 
 class OrderCancelRequest(BaseModel):
     reason: str
@@ -124,51 +126,31 @@ class PromotionUpdate(BaseModel):
         return data
 
 # ================= ENDPOINTS: CART =================
+# GHI CHÚ: Giỏ hàng được quản lý hoàn toàn ở phía client (React state trong AppLayout.jsx).
+# Các endpoint /cart/* dưới đây đã được deprecated — biến mock_cart_items (in-memory dict)
+# đã bị xóa bỏ vì gây mất giỏ hàng mỗi lần server restart và không hoạt động khi scale.
+# Nếu cần persistent cart trong tương lai, hãy sử dụng bảng `cart` đã có trong SQLite.
 
 @router.post("/cart/add")
 def add_to_cart(item: CartItemAdd, current_user: dict = Depends(get_current_user)):
-    user_id = current_user["id"]
-    # ... (logic giỏ hàng trong bộ nhớ, không thay đổi)
-    if item.stock <= 0:
-        raise HTTPException(status_code=400, detail="Sản phẩm đã hết hàng!")
-    
-    if user_id not in mock_cart_items: mock_cart_items[user_id] = []
-    
-    existing_item = next((i for i in mock_cart_items[user_id] if i["product_id"] == item.product_id), None)
-    if existing_item:
-        if existing_item["quantity"] + item.quantity > item.stock:
-            raise HTTPException(status_code=400, detail=f"Số lượng vượt quá tồn kho khả dụng ({item.stock})!")
-        existing_item["quantity"] += item.quantity
-    else:
-        if item.quantity > item.stock:
-             raise HTTPException(status_code=400, detail=f"Số lượng vượt quá tồn kho khả dụng ({item.stock})!")
-        mock_cart_items[user_id].append({"product_id": item.product_id, "quantity": item.quantity, "price": item.price, "stock": item.stock})
-    
-    return {"message": "Đã thêm sản phẩm vào giỏ hàng!", "cart": mock_cart_items[user_id]}
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="CART_DEPRECATED: Giỏ hàng được quản lý ở client-side. Endpoint này không còn sử dụng."
+    )
 
 @router.put("/cart/update")
 def update_cart_item(item: CartItemUpdate, current_user: dict = Depends(get_current_user)):
-    user_id = current_user["id"]
-    if user_id not in mock_cart_items: raise HTTPException(status_code=404, detail="Giỏ hàng trống!")
-    
-    existing_item = next((i for i in mock_cart_items[user_id] if i["product_id"] == item.product_id), None)
-    if not existing_item: raise HTTPException(status_code=404, detail="Sản phẩm không có trong giỏ hàng!")
-    if item.quantity <= 0: raise HTTPException(status_code=400, detail="Số lượng phải lớn hơn 0!")
-    if item.quantity > item.stock: raise HTTPException(status_code=400, detail=f"Số lượng vượt quá tồn kho khả dụng ({item.stock})!")
-    
-    existing_item["quantity"] = item.quantity
-    return {"message": "Đã cập nhật số lượng!", "cart": mock_cart_items[user_id]}
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="CART_DEPRECATED: Giỏ hàng được quản lý ở client-side. Endpoint này không còn sử dụng."
+    )
 
 @router.delete("/cart/remove/{product_id}")
 def remove_from_cart(product_id: int, current_user: dict = Depends(get_current_user)):
-    user_id = current_user["id"]
-    if user_id not in mock_cart_items: raise HTTPException(status_code=404, detail="Giỏ hàng trống!")
-    
-    initial_len = len(mock_cart_items[user_id])
-    mock_cart_items[user_id] = [item for item in mock_cart_items[user_id] if item["product_id"] != product_id]
-    if len(mock_cart_items[user_id]) == initial_len:
-        raise HTTPException(status_code=404, detail="Sản phẩm không có trong giỏ hàng!")
-    return {"message": "Đã xóa sản phẩm khỏi giỏ hàng!"}
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="CART_DEPRECATED: Giỏ hàng được quản lý ở client-side. Endpoint này không còn sử dụng."
+    )
 
 # ================= ENDPOINTS: VOUCHER & CHECKOUT =================
 
@@ -262,7 +244,7 @@ def process_checkout(req: CheckoutRequest, conn: sqlite3.Connection = Depends(ge
                 if voucher['max_discount_amount'] and discount_amount > voucher['max_discount_amount']: discount_amount = voucher['max_discount_amount']
             voucher_id = voucher['id']
 
-        final_amount = cart_total - discount_amount
+        final_amount = cart_total + req.shipping_fee - discount_amount
         cursor.execute(
             "INSERT INTO orders (customer_id, customer_name, order_type, total_amount, status, user_id, sales_person_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (current_user['id'], req.customer_name, 'online', final_amount if final_amount > 0 else 0, "pending", current_user['id'], None),
@@ -431,16 +413,40 @@ def cancel_user_order(
 ):
     if not body.reason or not body.reason.strip():
         raise HTTPException(status_code=400, detail="INT_ORDER_03: Vui lòng nhập lý do hủy đơn.")
+    
     cursor = conn.cursor()
+    
+    # Check if order exists, belongs to user, and is cancellable
     cursor.execute("SELECT status FROM orders WHERE id = ? AND user_id = ?", (order_id, current_user["id"]))
-    order_status = cursor.fetchone()
-    if not order_status:
+    order = cursor.fetchone()
+    if not order:
         raise HTTPException(status_code=404, detail="Không tìm thấy đơn hàng.")
-    if order_status["status"] != "pending":
-        raise HTTPException(status_code=400, detail="INT_ORDER_04: Không thể hủy đơn hàng khi đang giao hoặc đã xử lý.")
-    cursor.execute("UPDATE orders SET status = 'cancelled' WHERE id = ?", (order_id,))
-    conn.commit()
-    return {"message": "Đơn hàng đã được hủy thành công!", "reason": body.reason.strip()}
+
+    order_status = order["status"]
+    # NHIỆM VỤ 1.1: Thay đổi điều kiện chặn
+    non_cancellable_statuses = ['shipping', 'completed', 'returned', 'cancelled']
+    if order_status in non_cancellable_statuses:
+        raise HTTPException(status_code=400, detail=f"Không thể yêu cầu hủy cho đơn hàng ở trạng thái '{order_status}'.")
+
+    # NHIỆM VỤ 1.2: Gộp chung logic xử lý cho 'pending' và 'confirmed'
+    try:
+        # 1. Quét bảng order_items lấy danh sách sản phẩm.
+        cursor.execute("SELECT product_id, quantity FROM order_items WHERE order_id = ?", (order_id,))
+        items_to_restock = cursor.fetchall()
+
+        # 2. Chạy vòng lặp SQL cộng trả tồn kho
+        for item in items_to_restock:
+            cursor.execute("UPDATE products SET stock = stock + ? WHERE id = ?", (item['quantity'], item['product_id']))
+
+        # 3. Cập nhật trạng thái đơn sang thẳng 'cancelled'
+        cursor.execute("UPDATE orders SET status = 'cancelled', cancel_reason = ? WHERE id = ?", (body.reason.strip(), order_id))
+        
+        conn.commit()
+        return {"message": "Đơn hàng đã được hủy thành công. Tồn kho đã được cập nhật."}
+
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Lỗi cơ sở dữ liệu khi hủy đơn: {str(e)}")
 
 # ================= ENDPOINTS: SALES =================
 
@@ -481,14 +487,18 @@ def update_customer(customer_id: int, customer: CustomerUpdate, conn: sqlite3.Co
 def create_sale_order(order: SaleOrderCreate, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_sale_user)):
     cursor = conn.cursor()
     total_amount = 0
-    
+
+    # --- BƯỚC 1: VALIDATE toàn bộ items TRƯỚC khi thực hiện bất kỳ thay đổi nào ---
     for item in order.items:
-        cursor.execute("SELECT price, stock FROM products WHERE id = ?", (item.product_id,))
+        cursor.execute("SELECT price, stock, name FROM products WHERE id = ?", (item.product_id,))
         product = cursor.fetchone()
         if not product:
             raise HTTPException(status_code=404, detail=f"Sản phẩm ID {item.product_id} không tồn tại.")
         if product['stock'] < item.quantity:
-            raise HTTPException(status_code=400, detail=f"SALE_ORDER_04: Sản phẩm ID {item.product_id} không đủ tồn kho (còn {product['stock']}).")
+            raise HTTPException(
+                status_code=400,
+                detail=f"SALE_ORDER_04: Sản phẩm '{product['name']}' (ID {item.product_id}) không đủ tồn kho (yêu cầu {item.quantity}, còn {product['stock']}).",
+            )
         total_amount += product['price'] * item.quantity
 
     if order.customer_id:
@@ -497,27 +507,49 @@ def create_sale_order(order: SaleOrderCreate, conn: sqlite3.Connection = Depends
         if customer and customer['rank'] == 'VIP':
             total_amount *= 0.95
 
-    # Sử dụng user_id để lưu thông tin người tạo đơn hàng (sales_person_id được thay bằng user_id)
-    cursor.execute(
-        "INSERT INTO orders (customer_id, customer_name, order_type, total_amount, status, user_id, sales_person_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            order.customer_id,
-            order.customer_name,
-            order.order_type,
-            total_amount,
-            'awaiting_pickup' if order.order_type != 'online' else 'pending',
-            user['id'],
-            user['id'],
-        ),
-    )
-    order_id = cursor.lastrowid
+    # --- BƯỚC 2: Bọc toàn bộ ghi DB trong một transaction ---
+    try:
+        # 2a. Tạo bản ghi đơn hàng
+        cursor.execute(
+            "INSERT INTO orders (customer_id, customer_name, order_type, total_amount, status, user_id, sales_person_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                order.customer_id,
+                order.customer_name,
+                order.order_type,
+                int(total_amount),
+                'awaiting_pickup' if order.order_type != 'online' else 'pending',
+                user['id'],
+                user['id'],
+            ),
+        )
+        order_id = cursor.lastrowid
 
-    for item in order.items:
-        cursor.execute("INSERT INTO order_items (order_id, product_id, product_name, quantity) VALUES (?, ?, (SELECT name FROM products WHERE id=?), ?)",
-                       (order_id, item.product_id, item.product_id, item.quantity))
+        # 2b. Ghi order_items VÀ trừ kho vật lý (atomic) cho từng sản phẩm
+        for item in order.items:
+            cursor.execute(
+                "INSERT INTO order_items (order_id, product_id, product_name, quantity) VALUES (?, ?, (SELECT name FROM products WHERE id=?), ?)",
+                (order_id, item.product_id, item.product_id, item.quantity),
+            )
+            # Trừ kho atomic: chỉ trừ khi stock còn đủ (chống race condition)
+            cursor.execute(
+                "UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?",
+                (item.quantity, item.product_id, item.quantity),
+            )
+            if cursor.rowcount == 0:
+                # Race condition: sản phẩm vừa bị mua hết bởi transaction khác
+                raise ValueError(
+                    f"SALE_ORDER_04: Sản phẩm ID {item.product_id} vừa bị hết hàng trong lúc xử lý. Vui lòng kiểm tra lại tồn kho."
+                )
 
-    conn.commit()
-    return {"message": "SALE_ORDER_01/02: Tạo đơn hàng thành công!", "order_id": order_id}
+        conn.commit()
+        return {"message": "SALE_ORDER_01/02: Tạo đơn hàng thành công!", "order_id": order_id}
+
+    except (sqlite3.Error, ValueError) as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Lỗi khi tạo đơn hàng, đã hoàn tác: {str(e)}",
+        )
 
 @router.put("/sales/orders/{order_id}/update")
 def update_order_info(order_id: int, order_update: OrderInfoUpdate, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_sale_user)):
@@ -563,6 +595,33 @@ def update_order_status(order_id: int, status_update: OrderStatusUpdate, conn: s
     }
     if status_update.status not in valid_transitions.get(order['status'], []):
         raise HTTPException(status_code=400, detail=f"Không thể chuyển trạng thái từ '{order['status']}' sang '{status_update.status}'.")
+
+    # Logic cũ: Admin chủ động hủy đơn (từ pending/confirmed)
+    if status_update.status == 'cancelled':
+        # Chỉ thực hiện hoàn kho nếu Admin chủ động hủy từ các trạng thái chưa xuất hàng
+        if order['status'] in ['pending', 'confirmed']:
+            try:
+                # 1. Lấy danh sách sản phẩm trong đơn
+                cursor.execute("SELECT product_id, quantity FROM order_items WHERE order_id = ?", (order_id,))
+                items_to_restock = cursor.fetchall()
+
+                # 2. Chạy vòng lặp hoàn kho
+                for item in items_to_restock:
+                    cursor.execute("UPDATE products SET stock = stock + ? WHERE id = ?", (item['quantity'], item['product_id']))
+                
+                # 3. Cập nhật trạng thái và lý do hủy
+                cursor.execute("UPDATE orders SET status = 'cancelled', cancel_reason = ? WHERE id = ?", (status_update.reason, order_id))
+                
+                conn.commit()
+                return {"message": f"Đã hủy đơn hàng {order_id} và hoàn kho thành công."}
+            except sqlite3.Error as e:
+                conn.rollback()
+                raise HTTPException(status_code=500, detail=f"Lỗi CSDL khi hủy đơn: {e}")
+        else:
+            # Nếu hủy từ trạng thái khác (vd: đã giao), chỉ cập nhật status, không hoàn kho
+            cursor.execute("UPDATE orders SET status = 'cancelled', cancel_reason = ? WHERE id = ?", (status_update.reason, order_id))
+            conn.commit()
+            return {"message": f"Đã hủy đơn hàng {order_id} (không hoàn kho)."}
 
     if status_update.status == 'shipping' and order['status'] != 'shipping':
         cursor.execute("SELECT product_id, quantity FROM order_items WHERE order_id = ?", (order_id,))

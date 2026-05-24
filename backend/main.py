@@ -3,6 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import init_db as initialize_database
 from fastapi.responses import FileResponse
 import os
+from dotenv import load_dotenv
+
+# Tải các biến môi trường từ file .env trước khi import bất kỳ router hay cấu hình nào khác
+load_dotenv()
 
 # Import các router con 
 from routers.auth import router as auth_router
@@ -22,9 +26,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Danh sách origins cho phép — đọc từ biến môi trường, fallback về local dev
+_raw_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,http://localhost:8000"
+)
+ALLOWED_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

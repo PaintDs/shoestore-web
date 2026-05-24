@@ -78,6 +78,7 @@ const Checkout = ({ onBack, cartItems, onCheckoutSuccess, currentUser }) => {
         phone: customerInfo.phone,
         address: customerInfo.address,
         paymentMethod: paymentMethod,
+        shippingFee: shippingFee,
         cartItems: cartItems.map(item => ({
             id: Number(item.id),
             productId: Number(item.id), // Gửi cả 2 key để an toàn tuyệt đối

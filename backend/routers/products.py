@@ -104,9 +104,20 @@ def create_product(product: ProductCreate, conn: sqlite3.Connection = Depends(ge
     return {"message": "MGR_PROD_01: Thêm sản phẩm thành công.", "id": cursor.lastrowid}
 
 @router.delete("/products/{product_id}")
-def delete_product(product_id: int, conn: sqlite3.Connection = Depends(get_db)):
+def delete_product(
+    product_id: int,
+    conn: sqlite3.Connection = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    if current_user["role"] not in ["admin", "kho"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bạn không có quyền xóa sản phẩm.",
+        )
     cursor = conn.cursor()
     cursor.execute("DELETE FROM products WHERE id = ?", (product_id,))
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Sản phẩm không tồn tại.")
     conn.commit()
     return {"message": "Đã xóa thành công!"}
 
@@ -120,7 +131,17 @@ def get_product_detail(product_id: int, conn: sqlite3.Connection = Depends(get_d
     return dict(product)
 
 @router.put("/products/{product_id}")
-def update_product(product_id: int, product_update: ProductUpdate, conn: sqlite3.Connection = Depends(get_db)):
+def update_product(
+    product_id: int,
+    product_update: ProductUpdate,
+    conn: sqlite3.Connection = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    if current_user["role"] not in ["admin", "kho"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bạn không có quyền chỉnh sửa sản phẩm.",
+        )
     cursor = conn.cursor()
     set_clauses = []
     params = []

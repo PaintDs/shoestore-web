@@ -27,6 +27,6 @@ def chat_with_ai(req: ChatRequest):
         response = model.generate_content(req.message)
         return {"reply": response.text}
     except Exception as e:
-        print(f"Lỗi API Gemini: {e}")
+        print(f"Gemini API Error: {e}")
         # Trả về câu trả lời dự phòng thông minh nếu API dính rate limit hoặc lỗi kết nối
         return {"reply": "ShoeStore xin chào! Hệ thống tư vấn tự động đang bận xử lý một chút, bạn cần hỗ trợ gấp vui lòng để lại số điện thoại nhé!"}

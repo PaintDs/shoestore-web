@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, Search, Clock, CheckCircle, Truck, XCircle, ArrowLeft, PlusCircle, ShoppingBag } from 'lucide-react';
+import { Package, Search, Clock, CheckCircle, Truck, XCircle, ArrowLeft, PlusCircle, ShoppingBag, AlertTriangle } from 'lucide-react';
 
 const formatTimeAgo = (dateString) => {
   const date = new Date(dateString);
@@ -26,10 +26,11 @@ const formatOrderId = (id) => {
 
 const getStatusBadge = (status) => {
   switch(status) {
-    case 'pending': return <span className="bg-yellow-100 text-yellow-800 text-xs px-2 py-1 rounded-full font-bold flex items-center gap-1"><Clock className="w-3 h-3"/> Chờ xác nhận</span>;    case 'confirmed': return <span className="bg-cyan-100 text-cyan-800 text-xs px-2 py-1 rounded-full font-bold flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Đã xác nhận</span>;
+    case 'pending': return <span className="bg-yellow-100 text-yellow-800 text-xs px-2 py-1 rounded-full font-bold flex items-center gap-1"><Clock className="w-3 h-3"/> Chờ xác nhận</span>;
+    case 'confirmed': return <span className="bg-cyan-100 text-cyan-800 text-xs px-2 py-1 rounded-full font-bold flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Đã xác nhận</span>;
     case 'shipping': return <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full font-bold flex items-center gap-1"><Truck className="w-3 h-3"/> Đang giao</span>;
     case 'completed': return <span className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-bold flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Hoàn thành</span>;
-    default: return <span className="bg-red-100 text-red-800 text-xs px-2 py-1 rounded-full font-bold flex items-center gap-1"><XCircle className="w-3 h-3"/> Đã hủy</span>;
+    default: return <span className="bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded-full font-bold flex items-center gap-1"><XCircle className="w-3 h-3"/> Đã hủy</span>;
   }
 };
 
@@ -44,7 +45,8 @@ const OrderManagement = ({ onBack }) => {
         console.error("Admin token not found!");
         return;
       }
-      const response = await fetch('/api/orders?status=pending', {
+      // Lấy các đơn hàng đang chờ xử lý
+      const response = await fetch('/api/orders?status=pending,confirmed', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
@@ -57,11 +59,25 @@ const OrderManagement = ({ onBack }) => {
     fetchOrders();
   }, []);
 
-  const handleUpdateStatus = async (orderId, newStatus) => {
-    if (!window.confirm(`Bạn có chắc muốn ${newStatus === 'cancelled' ? 'hủy' : 'xác nhận'} đơn hàng này?`)) {
-      return;
-    }
+  const handleUpdateStatus = async (orderId, newStatus, originalStatus) => {
+    let reason = null;
+    let bodyPayload = { status: newStatus };
 
+    // Admin chủ động hủy đơn 'pending'
+    if (newStatus === 'cancelled' && originalStatus === 'pending') {
+      reason = prompt("Vui lòng nhập lý do hủy đơn hàng này:");
+      if (!reason || !reason.trim()) {
+        alert("Phải có lý do mới được hủy đơn!");
+        return;
+      }
+      bodyPayload.reason = reason;
+    }
+    // Các trường hợp khác (vd: xác nhận đơn 'pending')
+    else {
+      if (!window.confirm(`Bạn có chắc muốn ${newStatus === 'confirmed' ? 'xác nhận' : 'cập nhật'} đơn hàng này?`)) {
+        return;
+      }
+    }
     try {
       const token = localStorage.getItem('shoestore_token') || sessionStorage.getItem('token');
       if (!token) {
@@ -75,14 +91,14 @@ const OrderManagement = ({ onBack }) => {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ status: newStatus })
+        body: JSON.stringify(bodyPayload)
       });
 
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Cập nhật trạng thái thất bại.');
 
       alert(data.message);
-      await fetchOrders(); // Tải lại danh sách đơn 'pending'
+      await fetchOrders(); // Tải lại danh sách đơn
       setSelectedOrder(null); // Bỏ chọn đơn hàng đã xử lý
     } catch (error) {
       alert(`Lỗi: ${error.message}`);
@@ -180,14 +196,16 @@ const OrderManagement = ({ onBack }) => {
                 <div className="flex gap-2">
                   {selectedOrder.status === 'pending' && (
                     <>
-                      <button onClick={() => handleUpdateStatus(selectedOrder.id, 'confirmed')} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors">Xác nhận đơn</button>
-                      <button onClick={() => handleUpdateStatus(selectedOrder.id, 'cancelled')} className="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 font-bold rounded-lg transition-colors">Hủy</button>
+                      <button onClick={() => handleUpdateStatus(selectedOrder.id, 'confirmed', selectedOrder.status)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors">Xác nhận đơn</button>
+                      <button onClick={() => handleUpdateStatus(selectedOrder.id, 'cancelled', selectedOrder.status)} className="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 font-bold rounded-lg transition-colors">Hủy</button>
                     </>
                   )}
                 </div>
               </div>
 
-              {/* Thay thế placeholder bằng dữ liệu thật */}
+              {/* Card thông tin khách hàng (nếu cần) */}
+
+              {/* Card chi tiết sản phẩm */}
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
                 <h3 className="font-bold text-lg mb-4 border-b pb-3 flex items-center gap-2"><ShoppingBag className="w-5 h-5 text-gray-500"/> Chi tiết sản phẩm</h3>
                 <div className="space-y-4">
@@ -198,6 +216,7 @@ const OrderManagement = ({ onBack }) => {
                         <p className="font-bold text-gray-900">{item.product_name}</p>
                         <p className="text-sm text-gray-500">Số lượng: {item.quantity}</p>
                       </div>
+                      {/* Có thể thêm giá sản phẩm ở đây nếu cần */}
                     </div>
                     ))
                   ) : (

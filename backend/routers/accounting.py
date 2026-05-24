@@ -77,14 +77,14 @@ class PromotionCreate(BaseModel):
 @router.post("/accounting/invoices")
 def create_invoice(invoice: InvoiceCreate, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_accounting_user)):
     if not invoice.tax_id.isdigit() or len(invoice.tax_id) not in [10, 13]:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ACC_INV_03: MÃ£ sá»‘ thuáº¿ khÃ´ng há»£p lá»‡.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ACC_INV_03: Mã số thuế không hợp lệ.")
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO invoices (order_id, customer_name, company_name, tax_id, address, total_amount, issued_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (invoice.order_id, invoice.customer_name, invoice.company_name, invoice.tax_id, invoice.address, invoice.total_amount, datetime.now(timezone.utc))
     )
     conn.commit()
-    return {"message": "ACC_INV_01: Xuáº¥t hÃ³a Ä‘Æ¡n thÃ nh cÃ´ng!", "invoice_id": cursor.lastrowid}
+    return {"message": "ACC_INV_01: Xuất hóa đơn thành công!", "invoice_id": cursor.lastrowid}
 
 @router.get("/accounting/invoices")
 def search_invoices(search_term: Optional[str] = None, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_accounting_user)):
@@ -151,7 +151,7 @@ def download_invoice(invoice_id: int, conn: sqlite3.Connection = Depends(get_db)
 
 @router.post("/accounting/cash-ledger")
 def create_cash_entry(entry: CashLedgerCreate, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_accounting_user)):
-    # ACC_FIN_06: Kiá»ƒm tra xem ká»³ káº¿ toÃ¡n hiá»‡n táº¡i Ä‘Ã£ bá»‹ khÃ³a chÆ°a
+    # ACC_FIN_06: Kiểm tra xem kỳ kế toán hiện tại đã bị khóa chưa
     now = datetime.now(timezone.utc)
     cursor = conn.cursor()
     cursor.execute("SELECT status FROM accounting_periods WHERE month = ? AND year = ?", (now.month, now.year))
@@ -160,16 +160,16 @@ def create_cash_entry(entry: CashLedgerCreate, conn: sqlite3.Connection = Depend
     if period and period['status'] == 'locked':
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"ACC_FIN_06: Ká»³ káº¿ toÃ¡n {now.month}/{now.year} Ä‘Ã£ Ä‘Æ°á»£c khÃ³a sá»•. KhÃ´ng thá»ƒ ghi nháº­n giao dá»‹ch má»›i."
+            detail=f"ACC_FIN_06: Kỳ kế toán {now.month}/{now.year} đã được khóa sổ. Không thể ghi nhận giao dịch mới."
         )
     
     if entry.amount <= 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ACC_CASH_03: Sá»‘ tiá»n pháº£i lÃ  sá»‘ dÆ°Æ¡ng.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ACC_CASH_03: Số tiền phải là số dương.")
 
     cursor.execute("INSERT INTO cash_ledger (type, category, amount, method, description, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                    (entry.type, entry.category, entry.amount, entry.method, entry.description, now))
     conn.commit()
-    return {"message": "ACC_CASH_01/02: Ghi nháº­n giao dá»‹ch vÃ o sá»• quá»¹ thÃ nh cÃ´ng!", "entry_id": cursor.lastrowid}
+    return {"message": "ACC_CASH_01/02: Ghi nhận giao dịch vào sổ quỹ thành công!", "entry_id": cursor.lastrowid}
 
 @router.get("/accounting/cash-ledger")
 def get_cash_ledger(start: Optional[str] = None, end: Optional[str] = None, method: Optional[str] = None, conn: sqlite3.Connection = Depends(get_db), user: dict = Depends(get_accounting_user)):
@@ -192,7 +192,7 @@ def get_cash_ledger(start: Optional[str] = None, end: Optional[str] = None, meth
     cursor.execute(query, params)
     transactions = [dict(row) for row in cursor.fetchall()]
     
-    # TÃ­nh toÃ¡n summary
+    # Tính toán summary
     total_income = sum(t['amount'] for t in transactions if t['type'] == 'income')
     total_expense = sum(t['amount'] for t in transactions if t['type'] == 'expense')
     
@@ -209,11 +209,11 @@ def lock_accounting_period(req: PeriodLockRequest, conn: sqlite3.Connection = De
     cursor.execute("SELECT * FROM accounting_periods WHERE month = ? AND year = ?", (req.month, req.year))
     period = cursor.fetchone()
     if period and period['status'] == 'locked':
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Ká»³ káº¿ toÃ¡n {req.month}/{req.year} Ä‘Ã£ Ä‘Æ°á»£c khÃ³a trÆ°á»›c Ä‘Ã³.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Kỳ kế toán {req.month}/{req.year} đã được khóa trước đó.")
     
     cursor.execute("INSERT OR REPLACE INTO accounting_periods (month, year, status) VALUES (?, ?, 'locked')", (req.month, req.year))
     conn.commit()
-    return {"message": f"ACC_FIN_06: ÄÃ£ khÃ³a sá»• thÃ nh cÃ´ng ká»³ káº¿ toÃ¡n {req.month}/{req.year}."}
+    return {"message": f"ACC_FIN_06: Đã khóa sổ thành công kỳ kế toán {req.month}/{req.year}."}
 
 @router.get("/accounting/reports")
 def get_financial_report(
@@ -262,7 +262,7 @@ def get_performance_report(
     current_user: dict = Depends(get_current_user),
 ):
     if current_user["role"] not in ["admin", "ketoan", "sale"]:
-        raise HTTPException(status_code=403, detail="ACC_FIN_05: Báº¡n khÃ´ng cÃ³ quyá»n xem bÃ¡o cÃ¡o.")
+        raise HTTPException(status_code=403, detail="ACC_FIN_05: Bạn không có quyền xem báo cáo.")
     cursor = conn.cursor()
     period_fmt = "%Y-%m" if report_type == "monthly" else "%Y-%m-%d"
     cursor.execute(
@@ -303,7 +303,7 @@ def get_top_products_report(
     current_user: dict = Depends(get_current_user),
 ):
     if current_user["role"] not in ["admin", "ketoan", "sale"]:
-        raise HTTPException(status_code=403, detail="ACC_FIN_05: Báº¡n khÃ´ng cÃ³ quyá»n xem bÃ¡o cÃ¡o.")
+        raise HTTPException(status_code=403, detail="ACC_FIN_05: Bạn không có quyền xem báo cáo.")
     order_col = "total_quantity" if sort_by == "quantity" else "total_revenue"
     cursor = conn.cursor()
     cursor.execute(
@@ -329,7 +329,7 @@ def export_manager_report(
     current_user: dict = Depends(get_current_user),
 ):
     if current_user["role"] not in ["admin", "ketoan"]:
-        raise HTTPException(status_code=403, detail="MGR_RPT_06: Báº¡n khÃ´ng cÃ³ quyá»n xuáº¥t bÃ¡o cÃ¡o.")
+        raise HTTPException(status_code=403, detail="MGR_RPT_06: Bạn không có quyền xuất báo cáo.")
     perf = get_performance_report(report_type=report_type, conn=conn, current_user=current_user)
     top = get_top_products_report(limit=10, sort_by="quantity", conn=conn, current_user=current_user)
     buffer = io.StringIO()

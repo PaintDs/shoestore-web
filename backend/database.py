@@ -17,6 +17,7 @@ def _migrate_payroll_schema(cursor) -> None:
     _ensure_column(cursor, "orders", "user_id", "INTEGER")
     _ensure_column(cursor, "orders", "sales_person_id", "INTEGER")
     _ensure_column(cursor, "orders", "order_type", "TEXT")
+    _ensure_column(cursor, "orders", "cancel_reason", "TEXT")
     _ensure_column(cursor, "products", "sku", "TEXT")
     _ensure_column(cursor, "products", "status", "TEXT DEFAULT 'active'")
     cursor.execute(
@@ -115,6 +116,7 @@ def init_db():
             status TEXT DEFAULT 'pending',
             user_id INTEGER,
             sales_person_id INTEGER,
+            cancel_reason TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(customer_id) REFERENCES customers(id)
         )

@@ -261,7 +261,7 @@ const UserProfile = ({ currentUser, onBack, onLogout }) => {
                         <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center flex-wrap gap-2">
                           <span className="text-gray-500 font-medium">Tổng tiền:</span>
                           <span className="text-xl font-black text-gray-900">{order.total_amount.toLocaleString('vi-VN')}đ</span>
-                          {order.status === 'pending' && (
+                          {(order.status === 'pending' || order.status === 'confirmed') && (
                             <button
                               type="button"
                               onClick={() => setOrderToCancel(order)}
